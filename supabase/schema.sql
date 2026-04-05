@@ -1,0 +1,98 @@
+create extension if not exists pgcrypto;
+
+create type matter_stage as enum ('Intake', 'Treatment', 'Demand', 'Litigation', 'Resolution');
+create type priority_level as enum ('critical', 'high', 'medium', 'low');
+create type task_status as enum ('open', 'in_progress', 'waiting', 'done');
+create type contact_role as enum ('client', 'adjuster', 'provider', 'defense_counsel', 'court', 'witness', 'other');
+create type activity_type as enum ('note', 'call', 'email', 'deadline', 'demand', 'filing', 'settlement');
+
+create table if not exists matters (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  client_name text not null,
+  stage matter_stage not null default 'Intake',
+  priority priority_level not null default 'medium',
+  status text not null default '',
+  owner text not null default 'Garrick',
+  last_activity text not null default '',
+  next_action text not null default '',
+  blocker text,
+  projected_value numeric(12,2),
+  incident_date date,
+  statute_date date,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists contacts (
+  id uuid primary key default gen_random_uuid(),
+  matter_id uuid references matters(id) on delete cascade,
+  name text not null,
+  role contact_role not null default 'other',
+  phone text,
+  email text,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists tasks (
+  id uuid primary key default gen_random_uuid(),
+  matter_id uuid not null references matters(id) on delete cascade,
+  title text not null,
+  owner text not null,
+  due_at timestamptz,
+  priority priority_level not null default 'medium',
+  status task_status not null default 'open',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists waiting_items (
+  id uuid primary key default gen_random_uuid(),
+  matter_id uuid not null references matters(id) on delete cascade,
+  subject text not null,
+  waiting_on text not null,
+  age_label text,
+  next_step text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists events (
+  id uuid primary key default gen_random_uuid(),
+  matter_id uuid references matters(id) on delete set null,
+  starts_at timestamptz,
+  title text not null,
+  kind text not null default 'event',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists money_items (
+  id uuid primary key default gen_random_uuid(),
+  matter_id uuid not null references matters(id) on delete cascade,
+  status text not null,
+  amount numeric(12,2),
+  next_step text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists activity_log (
+  id uuid primary key default gen_random_uuid(),
+  matter_id uuid not null references matters(id) on delete cascade,
+  activity_type activity_type not null,
+  summary text not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists matter_notes (
+  id uuid primary key default gen_random_uuid(),
+  matter_id uuid not null references matters(id) on delete cascade,
+  body text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_tasks_matter_id on tasks(matter_id);
+create index if not exists idx_tasks_status on tasks(status);
+create index if not exists idx_waiting_items_matter_id on waiting_items(matter_id);
+create index if not exists idx_events_starts_at on events(starts_at);
+create index if not exists idx_activity_log_matter_id on activity_log(matter_id);

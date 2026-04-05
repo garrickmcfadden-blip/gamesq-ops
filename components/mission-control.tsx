@@ -1,0 +1,462 @@
+'use client';
+
+import { useMemo, useState } from 'react';
+import { stats } from '@/lib/data';
+import { buildKpis, buildSourceKpis, buildWarnings, matterTiming } from '@/lib/kpi';
+import { KPIThresholds } from '@/lib/settings';
+import { SaveStatusBanner } from '@/components/save-status';
+import { useMissionControl } from '@/lib/store';
+import { ActivityItem, Contact, Matter, Stage } from '@/lib/types';
+
+function panel(title: string, subtitle?: string) {
+  return { title, subtitle };
+}
+
+const panels = {
+  triage: panel('Triage Queue', 'What is late, fragile, or stuck'),
+  today: panel('Today', 'Time-bound commitments and Garrick-only work'),
+  pipeline: panel('Case Flow', 'Volume, drift, and stage pressure'),
+  waiting: panel('Waiting On', 'External dependencies and chase cadence'),
+  money: panel('Money Radar', 'Near-term fee opportunities and movement'),
+  feed: panel('Command Feed', 'Operational updates across the firm'),
+  detail: panel('Matter Workspace', 'Selected matter, next move, blockers, notes, and live task controls'),
+};
+
+const stageOrder: Stage[] = ['Intake', 'Treatment', 'Demand', 'Litigation', 'Resolution'];
+
+type DirectorySort = 'priority' | 'statute' | 'client' | 'value';
+
+function severityClasses(severity: string) {
+  if (severity === 'critical') return 'border-red-500/60 bg-red-500/10 text-red-100';
+  if (severity === 'high') return 'border-orange-500/60 bg-orange-500/10 text-orange-100';
+  if (severity === 'medium') return 'border-sky-400/30 bg-sky-400/10 text-sky-100';
+  return 'border-white/15 bg-white/[0.03] text-white';
+}
+
+function Card({ title, subtitle, children, className = '' }: { title: string; subtitle?: string; children: React.ReactNode; className?: string }) {
+  return (
+    <section className={`rounded-2xl border border-white/10 bg-white/5 p-5 shadow-glow backdrop-blur ${className}`}>
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold uppercase tracking-[0.24em] text-gam-sky/80">{title}</h2>
+          {subtitle ? <p className="mt-1 text-sm text-white/55">{subtitle}</p> : null}
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function formatDateDisplay(value?: string) {
+  if (!value) return '—';
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) {
+    const clean = value.slice(0, 10);
+    const [year, month, day] = clean.split('-');
+    return `${Number(month)}/${Number(day)}/${year}`;
+  }
+  return value;
+}
+
+function isSameDay(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function taskUrgencyWeight(due: string) {
+  if (/overdue/i.test(due)) return 100;
+  if (/today/i.test(due)) return 90;
+  const match = due.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (!match) return 10;
+  const [, mm, dd, yyyy] = match;
+  const target = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+  const now = new Date();
+  const diff = Math.ceil((target.getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / 86400000);
+  if (diff < 0) return 100;
+  if (diff === 0) return 90;
+  if (diff <= 3) return 80;
+  if (diff <= 7) return 60;
+  return 20;
+}
+
+export function MissionControl() {
+  const { matters, contacts, tasks, waitingOn, events, money, activity, milestones, thresholds, setThresholds, selectedMatterId, setSelectedMatterId, updateMatter, updateMatterMilestone, updateTaskStatus, createTask, createMatter, createContact, createWaitingItem, createActivity, createMoneyItem, createMatterNote, createEvent, deleteTask, deleteEvent, deleteWaitingItem, deleteMoneyItem, deleteMatterNote, updateEvent, updateWaitingItem, updateMoneyItem, saveStatus } = useMissionControl();
+  const [activeView, setActiveView] = useState<'mission' | 'directory'>('mission');
+  const [search, setSearch] = useState('');
+  const [stageFilter, setStageFilter] = useState<'all' | Stage>('all');
+  const [priorityFilter, setPriorityFilter] = useState<'all' | Matter['priority']>('all');
+  const [directorySort, setDirectorySort] = useState<DirectorySort>('priority');
+  const [showNewMatter, setShowNewMatter] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskOwner, setNewTaskOwner] = useState('Garrick');
+  const [newTaskDue, setNewTaskDue] = useState(() => new Date().toISOString().slice(0, 10));
+  const [newTaskTime, setNewTaskTime] = useState('');
+  const [matterForm, setMatterForm] = useState<{ title: string; client: string; stage: Stage; priority: Matter['priority']; status: string; owner: string; nextAction: string; blocker: string; projectedValue: string; incidentDate: string; statute: string; }>({ title: '', client: '', stage: 'Intake', priority: 'medium', status: '', owner: 'Garrick', nextAction: '', blocker: '', projectedValue: '', incidentDate: '', statute: '' });
+  const [contactForm, setContactForm] = useState({ name: '', role: 'client' as Contact['role'], phone: '', email: '' });
+  const [waitingForm, setWaitingForm] = useState({ subject: '', waitingOn: '', age: '', next: '' });
+  const [activityForm, setActivityForm] = useState({ type: 'note' as ActivityItem['type'], summary: '' });
+  const [moneyForm, setMoneyForm] = useState({ status: '', amount: '', next: '' });
+  const [noteBody, setNoteBody] = useState('');
+  const [eventForm, setEventForm] = useState({ title: '', kind: 'Event', date: new Date().toISOString().slice(0, 10), time: '' });
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [editingWaitingId, setEditingWaitingId] = useState<string | null>(null);
+  const [editingMoneyId, setEditingMoneyId] = useState<string | null>(null);
+
+  const filteredMatters = useMemo(() => matters.filter((matter) => {
+    const haystack = `${matter.title} ${matter.client} ${matter.sourceType ?? ''} ${matter.owner}`.toLowerCase();
+    const matchesSearch = !search || haystack.includes(search.toLowerCase());
+    const matchesStage = stageFilter === 'all' || matter.stage === stageFilter;
+    const matchesPriority = priorityFilter === 'all' || matter.priority === priorityFilter;
+    return matchesSearch && matchesStage && matchesPriority;
+  }), [matters, priorityFilter, search, stageFilter]);
+
+  const directoryMatters = useMemo(() => {
+    const priorityOrder = { critical: 4, high: 3, medium: 2, low: 1 };
+    return filteredMatters.slice().sort((a, b) => {
+      if (directorySort === 'client') return a.client.localeCompare(b.client);
+      if (directorySort === 'value') return Number((b.value || '$0').replace(/[$,]/g, '')) - Number((a.value || '$0').replace(/[$,]/g, ''));
+      if (directorySort === 'statute') return (a.statute || '9999-12-31').localeCompare(b.statute || '9999-12-31');
+      return priorityOrder[b.priority] - priorityOrder[a.priority];
+    });
+  }, [directorySort, filteredMatters]);
+
+  const pipeline = useMemo(() => stageOrder.map((stage) => {
+    const inStage = filteredMatters.filter((matter) => matter.stage === stage);
+    const stuck = inStage.filter((matter) => Boolean(matter.blocker)).length;
+    const stale = inStage.filter((matter) => /today|yesterday/i.test(matter.lastActivity) === false && matter.lastActivity).length;
+    return { stage, count: inStage.length, stuck, stale, notes: inStage[0]?.status ?? 'No matters in this stage', matterIds: inStage.map((matter) => matter.id) };
+  }), [filteredMatters]);
+
+  const kpis = useMemo(() => buildKpis(filteredMatters, tasks, milestones), [filteredMatters, tasks, milestones]);
+  const sourceKpis = useMemo(() => buildSourceKpis(filteredMatters, milestones), [filteredMatters, milestones]);
+  const warnings = useMemo(() => buildWarnings(filteredMatters, tasks, milestones, thresholds), [filteredMatters, tasks, milestones, thresholds]);
+  const selectedMatter = filteredMatters.find((matter) => matter.id === selectedMatterId) ?? matters.find((matter) => matter.id === selectedMatterId) ?? filteredMatters[0] ?? matters[0];
+  const selectedMilestone = milestones.find((m) => m.matterId === selectedMatter?.id);
+  const selectedTiming = selectedMatter ? matterTiming(selectedMatter, selectedMilestone) : [];
+  const selectedTasks = tasks.filter((task) => task.matterId === selectedMatter?.id);
+  const selectedWaiting = waitingOn.filter((item) => item.matterId === selectedMatter?.id);
+  const selectedMoney = money.find((item) => item.matterId === selectedMatter?.id);
+  const selectedActivity = activity.filter((item) => item.matterId === selectedMatter?.id);
+  const selectedContacts = contacts.filter((item) => item.matterId === selectedMatter?.id);
+
+  const triageTasks = useMemo(() => tasks.filter((task) => task.status !== 'done' && filteredMatters.some((matter) => matter.id === task.matterId)).slice().sort((a, b) => {
+    const priorityOrder = { critical: 4, high: 3, medium: 2, low: 1 };
+    const pa = priorityOrder[a.priority];
+    const pb = priorityOrder[b.priority];
+    const urgency = taskUrgencyWeight(b.due) - taskUrgencyWeight(a.due);
+    if (urgency !== 0) return urgency;
+    return pb - pa;
+  }), [filteredMatters, tasks]);
+
+  const eventBuckets = useMemo(() => {
+    const base = events.filter((item) => !selectedMatter || !item.matterId || item.matterId === selectedMatter.id || filteredMatters.some((m) => m.id === item.matterId));
+    const now = new Date();
+    const today: typeof base = [];
+    const upcoming: typeof base = [];
+    const undated: typeof base = [];
+
+    for (const event of base) {
+      if (!event.startsAt) {
+        undated.push(event);
+        continue;
+      }
+      const date = new Date(event.startsAt);
+      if (isSameDay(date, now)) today.push(event);
+      else if (date.getTime() > now.getTime()) upcoming.push(event);
+    }
+
+    return { today, upcoming, undated };
+  }, [events, filteredMatters, selectedMatter]);
+
+  function selectMatter(matterId?: string) {
+    if (matterId) {
+      setSelectedMatterId(matterId);
+      setActiveView('mission');
+    }
+  }
+
+  function formatDisplayDate(value: string) {
+    if (!value) return '';
+    const [year, month, day] = value.split('-');
+    if (!year || !month || !day) return value;
+    return `${Number(month)}/${Number(day)}/${year}`;
+  }
+
+  function submitTask() {
+    if (!selectedMatter || !newTaskTitle.trim()) return;
+    const due = newTaskTime ? `${formatDisplayDate(newTaskDue)} ${newTaskTime}` : formatDisplayDate(newTaskDue);
+    createTask({ matterId: selectedMatter.id, title: newTaskTitle.trim(), owner: newTaskOwner, due, priority: 'medium', status: 'open' });
+    setNewTaskTitle('');
+    setNewTaskTime('');
+  }
+
+  function submitMatter() {
+    if (!matterForm.title.trim() || !matterForm.client.trim()) return;
+    createMatter(matterForm);
+    setMatterForm({ title: '', client: '', stage: 'Intake', priority: 'medium', status: '', owner: 'Garrick', nextAction: '', blocker: '', projectedValue: '', incidentDate: '', statute: '' });
+    setShowNewMatter(false);
+  }
+
+  function submitEvent() {
+    if (!eventForm.title.trim()) return;
+    const startsAt = eventForm.time ? `${eventForm.date}T${eventForm.time}:00` : `${eventForm.date}T09:00:00`;
+    if (editingEventId) {
+      updateEvent(editingEventId, { title: eventForm.title, kind: eventForm.kind, startsAt });
+      setEditingEventId(null);
+    } else {
+      createEvent({ matterId: selectedMatter?.id, title: eventForm.title, kind: eventForm.kind, startsAt });
+    }
+    setEventForm({ title: '', kind: 'Event', date: new Date().toISOString().slice(0, 10), time: '' });
+  }
+
+  return (
+    <main className="min-h-screen px-6 py-6 lg:px-8">
+      <div className="mx-auto flex max-w-[1680px] flex-col gap-6">
+        <header className="rounded-3xl border border-white/10 bg-gam-blue/60 p-6 shadow-glow backdrop-blur">
+          <div className="mb-4 flex flex-wrap gap-3">
+            <button onClick={() => setActiveView('mission')} className={`rounded-2xl px-4 py-2 text-sm font-semibold ${activeView === 'mission' ? 'bg-gam-orange text-white' : 'border border-white/10 bg-white/5 text-white/70'}`}>Mission Control</button>
+            <button onClick={() => setActiveView('directory')} className={`rounded-2xl px-4 py-2 text-sm font-semibold ${activeView === 'directory' ? 'bg-gam-orange text-white' : 'border border-white/10 bg-white/5 text-white/70'}`}>All Matters</button>
+          </div>
+          <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+            <div>
+              <p className="text-sm uppercase tracking-[0.32em] text-gam-peach">GAMESQ, PLC</p>
+              <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white md:text-4xl">Mission Control</h1>
+              <p className="mt-3 max-w-3xl text-sm text-white/70 md:text-base">Configurable KPI warnings, grouped drilldowns, and matter filtering/search so Mission Control stays useful as the caseload grows.</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button onClick={() => setShowNewMatter((v) => !v)} className="rounded-2xl bg-gam-orange px-4 py-3 text-sm font-semibold text-white transition hover:brightness-110">{showNewMatter ? 'Close New Matter' : 'New Matter'}</button>
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                {stats.map((stat) => (
+                  <div key={stat.label} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                    <div className="text-xs uppercase tracking-[0.22em] text-white/50">{stat.label}</div>
+                    <div className="mt-2 text-2xl font-semibold text-white">{stat.value}</div>
+                    <div className="mt-1 text-xs text-gam-sky/80">{stat.delta}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <Card title="Filters & KPI Thresholds" subtitle="Control what you see and when Mission Control flags risk">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search client or matter" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+            <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value as 'all' | Stage)} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"><option value="all">all stages</option><option>Intake</option><option>Treatment</option><option>Demand</option><option>Litigation</option><option>Resolution</option></select>
+            <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value as 'all' | Matter['priority'])} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"><option value="all">all priorities</option><option>critical</option><option>high</option><option>medium</option><option>low</option></select>
+            <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white/70">Showing {filteredMatters.length} of {matters.length} matters</div>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <label className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white">Unsigned retainer days<input type="number" value={thresholds.unsignedRetainerDays} onChange={(e) => setThresholds({ ...thresholds, unsignedRetainerDays: Number(e.target.value) || 0 })} className="mt-2 w-full border-0 bg-transparent text-white outline-none" /></label>
+            <label className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white">Records → demand days<input type="number" value={thresholds.recordsToDemandDays} onChange={(e) => setThresholds({ ...thresholds, recordsToDemandDays: Number(e.target.value) || 0 })} className="mt-2 w-full border-0 bg-transparent text-white outline-none" /></label>
+            <label className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white">Demand without offer days<input type="number" value={thresholds.demandWithoutOfferDays} onChange={(e) => setThresholds({ ...thresholds, demandWithoutOfferDays: Number(e.target.value) || 0 })} className="mt-2 w-full border-0 bg-transparent text-white outline-none" /></label>
+            <label className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white">Stale matter days<input type="number" value={thresholds.staleMatterDays} onChange={(e) => setThresholds({ ...thresholds, staleMatterDays: Number(e.target.value) || 0 })} className="mt-2 w-full border-0 bg-transparent text-white outline-none" /></label>
+          </div>
+        </Card>
+
+        <SaveStatusBanner status={saveStatus} />
+
+        {showNewMatter ? (
+          <Card title="New Matter Intake" subtitle="Create a real matter record in Mission Control" className="border-gam-peach/20">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <input value={matterForm.title} onChange={(e) => setMatterForm({ ...matterForm, title: e.target.value })} placeholder="Matter title" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30" />
+              <input value={matterForm.client} onChange={(e) => setMatterForm({ ...matterForm, client: e.target.value })} placeholder="Client name" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30" />
+              <select value={matterForm.stage} onChange={(e) => setMatterForm({ ...matterForm, stage: e.target.value as Stage })} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"><option>Intake</option><option>Treatment</option><option>Demand</option><option>Litigation</option><option>Resolution</option></select>
+              <select value={matterForm.priority} onChange={(e) => setMatterForm({ ...matterForm, priority: e.target.value as Matter['priority'] })} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"><option>critical</option><option>high</option><option>medium</option><option>low</option></select>
+              <input value={matterForm.owner} onChange={(e) => setMatterForm({ ...matterForm, owner: e.target.value })} placeholder="Owner" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+              <input value={matterForm.status} onChange={(e) => setMatterForm({ ...matterForm, status: e.target.value })} placeholder="Status" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+              <input value={matterForm.nextAction} onChange={(e) => setMatterForm({ ...matterForm, nextAction: e.target.value })} placeholder="Next action" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+              <input value={matterForm.blocker} onChange={(e) => setMatterForm({ ...matterForm, blocker: e.target.value })} placeholder="Blocker" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+              <input value={matterForm.projectedValue} onChange={(e) => setMatterForm({ ...matterForm, projectedValue: e.target.value })} placeholder="Projected value" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+              <input type="date" value={matterForm.incidentDate} onChange={(e) => setMatterForm({ ...matterForm, incidentDate: e.target.value })} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+              <input type="date" value={matterForm.statute} onChange={(e) => setMatterForm({ ...matterForm, statute: e.target.value })} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+              <button onClick={submitMatter} className="rounded-xl bg-gam-orange px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110">Create Matter</button>
+            </div>
+          </Card>
+        ) : null}
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+          {kpis.map((kpi) => (
+            <div key={kpi.label} className="rounded-2xl border border-gam-peach/15 bg-gam-orange/5 p-4 shadow-glow">
+              <div className="text-xs uppercase tracking-[0.18em] text-white/45">{kpi.label}</div>
+              <div className="mt-2 text-2xl font-semibold text-white">{kpi.value}</div>
+              <div className="mt-2 text-xs text-white/55">{kpi.detail}</div>
+            </div>
+          ))}
+        </div>
+
+        {activeView === 'directory' ? (
+          <Card title="All Matters" subtitle="Directory view for finding the exact file you want, then jumping straight into its workspace">
+            <div className="mb-4 flex flex-wrap gap-3">
+              <select value={directorySort} onChange={(e) => setDirectorySort(e.target.value as DirectorySort)} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none">
+                <option value="priority">sort: priority</option>
+                <option value="statute">sort: statute</option>
+                <option value="client">sort: client</option>
+                <option value="value">sort: value</option>
+              </select>
+              <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white/70">Click any row to open that matter in Mission Control.</div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full border-separate border-spacing-y-2 text-left">
+                <thead>
+                  <tr className="text-xs uppercase tracking-[0.18em] text-white/45">
+                    <th className="px-3 py-2">Client</th>
+                    <th className="px-3 py-2">Matter</th>
+                    <th className="px-3 py-2">Stage</th>
+                    <th className="px-3 py-2">Priority</th>
+                    <th className="px-3 py-2">Status</th>
+                    <th className="px-3 py-2">Next Action</th>
+                    <th className="px-3 py-2">Source</th>
+                    <th className="px-3 py-2">Statute</th>
+                    <th className="px-3 py-2">Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {directoryMatters.map((matter) => (
+                    <tr key={matter.id} onClick={() => selectMatter(matter.id)} className="cursor-pointer rounded-2xl border border-white/10 bg-white/[0.03] transition hover:bg-white/[0.06]">
+                      <td className="px-3 py-3 text-sm font-semibold text-white">{matter.client}</td>
+                      <td className="px-3 py-3 text-sm text-white/80">{matter.title}</td>
+                      <td className="px-3 py-3 text-sm text-white/75">{matter.stage}</td>
+                      <td className="px-3 py-3 text-sm text-white/75">{matter.priority}</td>
+                      <td className="px-3 py-3 text-sm text-white/75">{matter.status}</td>
+                      <td className="px-3 py-3 text-sm text-white/75">{matter.nextAction || '—'}</td>
+                      <td className="px-3 py-3 text-sm text-white/75">{matter.sourceType || '—'}</td>
+                      <td className="px-3 py-3 text-sm text-white/75">{formatDateDisplay(matter.statute)}</td>
+                      <td className="px-3 py-3 text-sm font-semibold text-emerald-300">{matter.value}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {!directoryMatters.length ? <div className="py-8 text-center text-sm text-white/55">No matters match the current filters.</div> : null}
+            </div>
+          </Card>
+        ) : (
+        <div className="grid gap-6 xl:grid-cols-[1.05fr,1.25fr,1.05fr]">
+          <div className="flex flex-col gap-6">
+            <Card title={panels.triage.title} subtitle={panels.triage.subtitle}>
+              {warnings.length ? <div className="mb-4 space-y-2">{warnings.slice(0, 4).map((warning, idx) => <button key={`${warning.matterId}-${idx}`} onClick={() => selectMatter(warning.matterId)} className={`w-full rounded-xl border px-3 py-2 text-left ${warning.severity === 'high' ? 'border-red-500/40 bg-red-500/10 text-red-100' : 'border-orange-500/40 bg-orange-500/10 text-orange-100'}`}><div className="text-xs uppercase tracking-[0.18em]">{warning.label}</div><div className="mt-1 text-sm">{warning.detail}</div></button>)}</div> : null}
+              <div className="space-y-3">
+                {triageTasks.map((task) => {
+                  const matter = matters.find((item) => item.id === task.matterId);
+                  return (
+                    <button key={task.id} onClick={() => selectMatter(task.matterId)} className={`w-full rounded-2xl border p-4 text-left transition hover:scale-[1.01] hover:border-white/20 ${severityClasses(task.priority)} ${selectedMatterId === task.matterId ? 'ring-1 ring-gam-peach/70' : ''}`}>
+                      <div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold">{task.title}</p><span className="rounded-full border border-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-white/70">{task.priority}</span></div>
+                      <p className="mt-2 text-sm text-white/75">{matter?.title}</p>
+                      <div className="mt-3 flex items-center justify-between text-xs text-white/60"><span>Owner: {task.owner}</span><span>{task.due}</span></div>
+                    </button>
+                  );
+                })}
+              </div>
+            </Card>
+
+            <Card title={panels.today.title} subtitle={panels.today.subtitle}>
+              <div className="space-y-4">
+                <div>
+                  <div className="mb-2 text-xs uppercase tracking-[0.18em] text-white/45">Today</div>
+                  <div className="space-y-3">{eventBuckets.today.length ? eventBuckets.today.map((item) => <div key={item.id} className="flex items-center gap-2"><button onClick={() => selectMatter(item.matterId)} className="flex flex-1 items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left transition hover:border-white/20 hover:bg-white/[0.05]"><div className="min-w-32 text-sm font-semibold text-gam-peach">{item.time}</div><div className="flex-1"><p className="text-sm text-white">{item.title}</p><p className="mt-1 text-xs uppercase tracking-[0.22em] text-white/45">{item.type}</p></div></button><button onClick={() => { setEditingEventId(item.id); const iso = item.startsAt?.slice(0, 16) ?? ''; const [date, time] = iso ? iso.split('T') : ['', '']; setEventForm({ title: item.title, kind: item.type, date: date || new Date().toISOString().slice(0, 10), time: time || '' }); }} className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-sky-200">Edit</button><button onClick={() => { if (confirm('Delete this event?')) void deleteEvent(item.id); }} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-red-200">Delete</button></div>) : <div className="text-sm text-white/50">No events today.</div>}</div>
+                </div>
+                <div>
+                  <div className="mb-2 text-xs uppercase tracking-[0.18em] text-white/45">Upcoming</div>
+                  <div className="space-y-3">{eventBuckets.upcoming.length ? eventBuckets.upcoming.slice(0, 8).map((item) => <div key={item.id} className="flex items-center gap-2"><button onClick={() => selectMatter(item.matterId)} className="flex flex-1 items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left transition hover:border-white/20 hover:bg-white/[0.05]"><div className="min-w-32 text-sm font-semibold text-gam-peach">{item.time}</div><div className="flex-1"><p className="text-sm text-white">{item.title}</p><p className="mt-1 text-xs uppercase tracking-[0.22em] text-white/45">{item.type}</p></div></button><button onClick={() => { setEditingEventId(item.id); const iso = item.startsAt?.slice(0, 16) ?? ''; const [date, time] = iso ? iso.split('T') : ['', '']; setEventForm({ title: item.title, kind: item.type, date: date || new Date().toISOString().slice(0, 10), time: time || '' }); }} className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-sky-200">Edit</button><button onClick={() => { if (confirm('Delete this event?')) void deleteEvent(item.id); }} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-red-200">Delete</button></div>) : <div className="text-sm text-white/50">No upcoming events.</div>}</div>
+                </div>
+                {eventBuckets.undated.length ? <div><div className="mb-2 text-xs uppercase tracking-[0.18em] text-white/45">Undated</div><div className="space-y-3">{eventBuckets.undated.map((item) => <button key={item.id} onClick={() => selectMatter(item.matterId)} className="flex w-full items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left transition hover:border-white/20 hover:bg-white/[0.05]"><div className="min-w-32 text-sm font-semibold text-gam-peach">{item.time || 'No date'}</div><div className="flex-1"><p className="text-sm text-white">{item.title}</p><p className="mt-1 text-xs uppercase tracking-[0.22em] text-white/45">{item.type}</p></div></button>)}</div></div> : null}
+              </div>
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Add Event</h4>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <input value={eventForm.title} onChange={(e) => setEventForm({ ...eventForm, title: e.target.value })} placeholder="Event title" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+                  <input value={eventForm.kind} onChange={(e) => setEventForm({ ...eventForm, kind: e.target.value })} placeholder="Type" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+                  <input type="date" value={eventForm.date} onChange={(e) => setEventForm({ ...eventForm, date: e.target.value })} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+                  <input type="time" value={eventForm.time} onChange={(e) => setEventForm({ ...eventForm, time: e.target.value })} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+                </div>
+                <div className="mt-3 flex gap-2"><button onClick={submitEvent} className="rounded-xl bg-gam-orange px-4 py-2 text-sm font-semibold text-white">{editingEventId ? 'Save Event' : 'Add Event'}</button>{editingEventId ? <button onClick={() => { setEditingEventId(null); setEventForm({ title: '', kind: 'Event', date: new Date().toISOString().slice(0, 10), time: '' }); }} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/70">Cancel</button> : null}</div>
+              </div>
+            </Card>
+          </div>
+
+          <div className="flex flex-col gap-6">
+            <Card title={panels.pipeline.title} subtitle={panels.pipeline.subtitle}>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+                {pipeline.map((stage) => (
+                  <button key={stage.stage} onClick={() => selectMatter(stage.matterIds[0])} className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-left transition hover:border-white/20 hover:bg-white/[0.06]">
+                    <div className="flex items-center justify-between"><h3 className="text-base font-semibold text-white">{stage.stage}</h3><span className="text-2xl font-semibold text-gam-sky">{stage.count}</span></div>
+                    <div className="mt-3 flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-white/50"><span className="rounded-full bg-white/5 px-2 py-1">Stuck {stage.stuck}</span><span className="rounded-full bg-white/5 px-2 py-1">Stale {stage.stale}</span></div>
+                    <p className="mt-3 text-sm text-white/65">{stage.notes}</p>
+                  </button>
+                ))}
+              </div>
+            </Card>
+
+            <Card title={panels.detail.title} subtitle={panels.detail.subtitle} className="border-gam-peach/20">
+              {selectedMatter ? <div className="space-y-5">
+                <div className="rounded-2xl border border-gam-peach/20 bg-gam-orange/5 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-xl font-semibold text-white">{selectedMatter.title}</h3><p className="mt-1 text-sm text-white/65">Client: {selectedMatter.client}</p></div><div className={`rounded-full border px-3 py-1 text-xs uppercase tracking-[0.2em] ${severityClasses(selectedMatter.priority)}`}>{selectedMatter.stage}</div></div>
+                  <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.2em] text-white/45">Stage</div><select value={selectedMatter.stage} onChange={(e) => updateMatter(selectedMatter.id, { stage: e.target.value as Stage })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none"><option>Intake</option><option>Treatment</option><option>Demand</option><option>Litigation</option><option>Resolution</option></select></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.2em] text-white/45">Priority</div><select value={selectedMatter.priority} onChange={(e) => updateMatter(selectedMatter.id, { priority: e.target.value as Matter['priority'] })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none"><option>critical</option><option>high</option><option>medium</option><option>low</option></select></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.2em] text-white/45">Owner</div><input value={selectedMatter.owner} onChange={(e) => updateMatter(selectedMatter.id, { owner: e.target.value })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.2em] text-white/45">Status</div><input value={selectedMatter.status} onChange={(e) => updateMatter(selectedMatter.id, { status: e.target.value })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.2em] text-white/45">Next Action</div><input value={selectedMatter.nextAction} onChange={(e) => updateMatter(selectedMatter.id, { nextAction: e.target.value })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.2em] text-white/45">Blocker</div><input value={selectedMatter.blocker ?? ''} onChange={(e) => updateMatter(selectedMatter.id, { blocker: e.target.value })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" placeholder="None currently" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.2em] text-white/45">Incident Date</div><input type="date" value={selectedMatter.incidentDate || ''} onChange={(e) => updateMatter(selectedMatter.id, { incidentDate: e.target.value })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.2em] text-white/45">Statute</div><input type="date" value={selectedMatter.statute || ''} onChange={(e) => updateMatter(selectedMatter.id, { statute: e.target.value })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.2em] text-white/45">Projected Value</div><input value={selectedMatter.value.replace(/[$,]/g, '')} onChange={(e) => updateMatter(selectedMatter.id, { value: `$${e.target.value}` })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.2em] text-white/45">Source Type</div><input value={selectedMatter.sourceType ?? ''} onChange={(e) => updateMatter(selectedMatter.id, { sourceType: e.target.value })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" placeholder="Referral / YouTube / Search" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.2em] text-white/45">Source Detail</div><input value={selectedMatter.sourceDetail ?? ''} onChange={(e) => updateMatter(selectedMatter.id, { sourceDetail: e.target.value })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" placeholder="Former client / Google Maps / etc." /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.2em] text-white/45">Campaign</div><input value={selectedMatter.campaign ?? ''} onChange={(e) => updateMatter(selectedMatter.id, { campaign: e.target.value })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" placeholder="Campaign or content source" /></label>
+                  </div>
+                </div>
+
+                <div className="grid gap-5 2xl:grid-cols-[1.05fr,0.95fr]">
+                  <div className="space-y-5">
+                    <div><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Open Tasks</h4><div className="mt-3 space-y-3">{selectedTasks.length ? selectedTasks.map((task) => <div key={task.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-semibold text-white">{task.title}</p><p className="mt-1 text-xs uppercase tracking-[0.18em] text-white/45">{task.owner} • {task.due}</p></div><div className="flex gap-2">{task.status !== 'done' ? <button onClick={() => updateTaskStatus(task.id, 'done')} className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-emerald-300">Done</button> : null}{task.status === 'open' ? <button onClick={() => updateTaskStatus(task.id, 'in_progress')} className="rounded-full border border-sky-400/30 bg-sky-400/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-sky-200">Start</button> : null}<button onClick={() => { if (confirm('Delete this task?')) void deleteTask(task.id); }} className="rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-red-200">Delete</button></div></div></div>) : <p className="text-sm text-white/55">No tasks attached to this matter yet.</p>}</div></div>
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Quick Add Task</h4><div className="mt-3 grid gap-3 md:grid-cols-[1.2fr,0.8fr,0.9fr,0.8fr,auto]"><input value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} placeholder="Task title" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30" /><input value={newTaskOwner} onChange={(e) => setNewTaskOwner(e.target.value)} placeholder="Owner" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30" /><input type="date" value={newTaskDue} onChange={(e) => setNewTaskDue(e.target.value)} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><input type="time" value={newTaskTime} onChange={(e) => setNewTaskTime(e.target.value)} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><button onClick={submitTask} className="rounded-xl bg-gam-orange px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110">Add</button></div></div>
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Add Contact</h4><div className="mt-3 grid gap-3 md:grid-cols-2"><input value={contactForm.name} onChange={(e) => setContactForm({ ...contactForm, name: e.target.value })} placeholder="Name" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><select value={contactForm.role} onChange={(e) => setContactForm({ ...contactForm, role: e.target.value as Contact['role'] })} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"><option value="client">client</option><option value="adjuster">adjuster</option><option value="provider">provider</option><option value="defense_counsel">defense counsel</option><option value="court">court</option><option value="witness">witness</option><option value="other">other</option></select><input value={contactForm.phone} onChange={(e) => setContactForm({ ...contactForm, phone: e.target.value })} placeholder="Phone" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><input value={contactForm.email} onChange={(e) => setContactForm({ ...contactForm, email: e.target.value })} placeholder="Email" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /></div><button onClick={() => { if (selectedMatter && contactForm.name.trim()) { createContact({ matterId: selectedMatter.id, ...contactForm }); setContactForm({ name: '', role: 'client', phone: '', email: '' }); }}} className="mt-3 rounded-xl bg-gam-orange px-4 py-2 text-sm font-semibold text-white">Add Contact</button></div>
+                  </div>
+
+                  <div className="space-y-5">
+                    <div><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Waiting On</h4><div className="mt-3 space-y-3">{selectedWaiting.length ? selectedWaiting.map((item) => <div key={item.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-white">{item.subject}</p><p className="mt-1 text-sm text-white/65">Waiting on {item.waitingOn}</p><p className="mt-3 text-xs uppercase tracking-[0.18em] text-white/45">Age {item.age} • Next {item.next}</p></div><div className="flex gap-2"><button onClick={() => { setEditingWaitingId(item.id); setWaitingForm({ subject: item.subject, waitingOn: item.waitingOn, age: item.age, next: item.next }); }} className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-sky-200">Edit</button><button onClick={() => { if (confirm('Delete this waiting item?')) void deleteWaitingItem(item.id); }} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-red-200">Delete</button></div></div></div>) : <p className="text-sm text-white/55">Nothing outstanding.</p>}</div></div>
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">{editingWaitingId ? 'Edit Waiting Item' : 'Add Waiting Item'}</h4><div className="mt-3 grid gap-3 md:grid-cols-2"><input value={waitingForm.subject} onChange={(e) => setWaitingForm({ ...waitingForm, subject: e.target.value })} placeholder="Subject" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><input value={waitingForm.waitingOn} onChange={(e) => setWaitingForm({ ...waitingForm, waitingOn: e.target.value })} placeholder="Waiting on" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><input value={waitingForm.age} onChange={(e) => setWaitingForm({ ...waitingForm, age: e.target.value })} placeholder="Age label" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><input value={waitingForm.next} onChange={(e) => setWaitingForm({ ...waitingForm, next: e.target.value })} placeholder="Next step" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /></div><div className="mt-3 flex gap-2"><button onClick={() => { if (selectedMatter && waitingForm.subject.trim()) { if (editingWaitingId) { updateWaitingItem(editingWaitingId, waitingForm); setEditingWaitingId(null); } else { createWaitingItem({ matterId: selectedMatter.id, ...waitingForm }); } setWaitingForm({ subject: '', waitingOn: '', age: '', next: '' }); }}} className="rounded-xl bg-gam-orange px-4 py-2 text-sm font-semibold text-white">{editingWaitingId ? 'Save Waiting Item' : 'Add Waiting Item'}</button>{editingWaitingId ? <button onClick={() => { setEditingWaitingId(null); setWaitingForm({ subject: '', waitingOn: '', age: '', next: '' }); }} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/70">Cancel</button> : null}</div></div>
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Add Matter Note</h4><textarea value={noteBody} onChange={(e) => setNoteBody(e.target.value)} placeholder="Matter note" className="mt-3 min-h-24 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><button onClick={() => { if (selectedMatter && noteBody.trim()) { createMatterNote({ matterId: selectedMatter.id, body: noteBody.trim() }); setNoteBody(''); }}} className="mt-3 rounded-xl bg-gam-orange px-4 py-2 text-sm font-semibold text-white">Add Note</button></div>
+                    <div><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Contacts</h4><div className="mt-3 space-y-3">{selectedContacts.map((contact) => <div key={contact.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><p className="text-sm font-semibold text-white">{contact.name}</p><p className="mt-1 text-xs uppercase tracking-[0.18em] text-white/45">{contact.role.replace('_', ' ')}</p>{(contact.phone || contact.email) ? <p className="mt-2 text-sm text-white/65">{contact.phone ?? contact.email}</p> : null}</div>)}</div></div>
+                    <div><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Matter Notes</h4><div className="mt-3 space-y-3">{selectedMatter.notes.map((note) => <div key={note} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/80"><div className="flex items-start justify-between gap-3"><div>{note}</div><button onClick={() => { if (confirm('Delete this note?')) void deleteMatterNote(selectedMatter.id, note); }} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-red-200">Delete</button></div></div>)}</div></div>
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-3 text-xs uppercase tracking-[0.18em] text-white/45">
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">Incident: <span className="text-white/75">{formatDateDisplay(selectedMatter.incidentDate)}</span></div>
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">Statute: <span className="text-white/75">{formatDateDisplay(selectedMatter.statute)}</span></div>
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">Last activity: <span className="text-white/75 normal-case tracking-normal">{selectedMatter.lastActivity}</span></div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  {selectedTiming.map((item) => (
+                    <div key={item.label} className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                      <div className="text-xs uppercase tracking-[0.18em] text-white/45">{item.label}</div>
+                      <div className="mt-2 text-lg font-semibold text-white">{item.display}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                  <h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Milestones</h4>
+                  <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Lead Created</div><input type="date" value={selectedMilestone?.leadCreatedAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { leadCreatedAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Retainer Sent</div><input type="date" value={selectedMilestone?.retainerSentAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { retainerSentAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Retainer Signed</div><input type="date" value={selectedMilestone?.retainerSignedAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { retainerSignedAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Records Ordered</div><input type="date" value={selectedMilestone?.recordsFirstOrderedAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { recordsFirstOrderedAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Records Received</div><input type="date" value={selectedMilestone?.recordsReceivedAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { recordsReceivedAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Demand Sent</div><input type="date" value={selectedMilestone?.demandSentAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { demandSentAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">First Offer</div><input type="date" value={selectedMilestone?.firstOfferAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { firstOfferAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Settlement Reached</div><input type="date" value={selectedMilestone?.settlementReachedAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { settlementReachedAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                  </div>
+                </div>
+              </div> : null}
+            </Card>
+          </div>
+
+          <div className="flex flex-col gap-6">
+            <Card title={panels.waiting.title} subtitle={panels.waiting.subtitle}><div className="space-y-3">{waitingOn.filter((item) => filteredMatters.some((matter) => matter.id === item.matterId)).map((item) => <button key={item.id} onClick={() => selectMatter(item.matterId)} className="w-full rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-left transition hover:border-white/20 hover:bg-white/[0.05]"><div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold text-white">{item.subject}</p><span className="text-xs uppercase tracking-[0.18em] text-gam-peach">{item.age}</span></div><p className="mt-2 text-sm text-white/65">{matters.find((matter) => matter.id === item.matterId)?.title}</p><p className="mt-3 text-xs uppercase tracking-[0.18em] text-white/45">Next: {item.next}</p></button>)}</div></Card>
+            <Card title={panels.money.title} subtitle={panels.money.subtitle}><div className="space-y-3">{money.filter((row) => filteredMatters.some((matter) => matter.id === row.matterId)).map((row) => <div key={row.id} className="flex items-center gap-2"><button onClick={() => selectMatter(row.matterId)} className="flex-1 rounded-2xl border border-emerald-400/20 bg-emerald-400/5 p-4 text-left transition hover:border-emerald-300/40 hover:bg-emerald-400/10"><div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold text-white">{matters.find((matter) => matter.id === row.matterId)?.title}</p><span className="text-sm font-semibold text-emerald-300">{row.amount}</span></div><p className="mt-2 text-sm text-white/65">{row.status}</p><p className="mt-3 text-xs uppercase tracking-[0.18em] text-white/45">Next: {row.next}</p></button><button onClick={() => { setEditingMoneyId(row.id); setMoneyForm({ status: row.status, amount: row.amount.replace(/[$,]/g, ''), next: row.next }); }} className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-sky-200">Edit</button><button onClick={() => { if (confirm('Delete this money item?')) void deleteMoneyItem(row.id); }} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-red-200">Delete</button></div>)}</div><div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4"><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Source Performance</h4><div className="mt-3 space-y-3">{sourceKpis.length ? sourceKpis.map((source) => <div key={source.source} className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="flex items-center justify-between gap-3"><div className="text-sm font-semibold text-white">{source.source}</div><div className="text-sm font-semibold text-emerald-300">${source.pipelineValue.toLocaleString()}</div></div><div className="mt-2 text-xs text-white/60">{source.matterCount} matters • Lead→Sign {source.avgLeadToSign !== null ? `${source.avgLeadToSign}d` : '—'} • File Age {source.avgFileAge !== null ? `${source.avgFileAge}d` : '—'}</div><div className="mt-1 text-xs text-white/45">Records→Demand {source.avgRecordsToDemand !== null ? `${source.avgRecordsToDemand}d` : '—'} • Demand→Offer {source.avgDemandToOffer !== null ? `${source.avgDemandToOffer}d` : '—'}</div></div>) : <div className="text-sm text-white/55">No source data yet.</div>}</div></div><div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4"><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">{editingMoneyId ? 'Edit Money Item' : 'Add Money Item'}</h4><div className="mt-3 grid gap-3"><input value={moneyForm.status} onChange={(e) => setMoneyForm({ ...moneyForm, status: e.target.value })} placeholder="Status" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><input value={moneyForm.amount} onChange={(e) => setMoneyForm({ ...moneyForm, amount: e.target.value })} placeholder="Amount" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><input value={moneyForm.next} onChange={(e) => setMoneyForm({ ...moneyForm, next: e.target.value })} placeholder="Next step" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /></div><div className="mt-3 flex gap-2"><button onClick={() => { if (selectedMatter && moneyForm.status.trim()) { if (editingMoneyId) { updateMoneyItem(editingMoneyId, moneyForm); setEditingMoneyId(null); } else { createMoneyItem({ matterId: selectedMatter.id, ...moneyForm }); } setMoneyForm({ status: '', amount: '', next: '' }); }}} className="rounded-xl bg-gam-orange px-4 py-2 text-sm font-semibold text-white">{editingMoneyId ? 'Save Money Item' : 'Add Money Item'}</button>{editingMoneyId ? <button onClick={() => { setEditingMoneyId(null); setMoneyForm({ status: '', amount: '', next: '' }); }} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/70">Cancel</button> : null}</div></div></Card>
+            <Card title={panels.feed.title} subtitle={panels.feed.subtitle}><div className="space-y-3">{selectedActivity.map((item, index) => <div key={item.id} className="flex gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3"><div className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-full bg-gam-orange/15 text-xs font-semibold text-gam-peach">{index + 1}</div><div><p className="text-sm text-white/80">{item.summary}</p><p className="mt-1 text-xs uppercase tracking-[0.18em] text-white/45">{item.type} • {item.createdAt}</p></div></div>)}</div><div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4"><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">KPI Drilldown</h4><div className="mt-3 grid gap-3"><div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Intake Velocity</div><div className="mt-2 text-lg font-semibold text-white">{kpis[0]?.value ?? '—'} / {kpis[1]?.value ?? '—'}</div><div className="mt-1 text-xs text-white/55">Lead to sign and retainer to sign.</div></div><div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Demand Velocity</div><div className="mt-2 text-lg font-semibold text-white">{kpis[3]?.value ?? '—'} / {kpis[4]?.value ?? '—'}</div><div className="mt-1 text-xs text-white/55">Records to demand and demand to offer.</div></div><div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Resolution Velocity</div><div className="mt-2 text-lg font-semibold text-white">{kpis[5]?.value ?? '—'}</div><div className="mt-1 text-xs text-white/55">Demand to settlement cycle time.</div></div><div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Risk & Drift</div><div className="mt-2 text-lg font-semibold text-white">{kpis[6]?.value ?? '—'} stale / {kpis[8]?.value ?? '—'} risk</div><div className="mt-1 text-xs text-white/55">Stale matters and statute risk.</div></div></div></div><div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4"><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Add Activity</h4><div className="mt-3 grid gap-3"><select value={activityForm.type} onChange={(e) => setActivityForm({ ...activityForm, type: e.target.value as ActivityItem['type'] })} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"><option value="note">note</option><option value="call">call</option><option value="email">email</option><option value="deadline">deadline</option><option value="demand">demand</option><option value="filing">filing</option><option value="settlement">settlement</option></select><textarea value={activityForm.summary} onChange={(e) => setActivityForm({ ...activityForm, summary: e.target.value })} placeholder="Summary" className="min-h-24 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /></div><button onClick={() => { if (selectedMatter && activityForm.summary.trim()) { createActivity({ matterId: selectedMatter.id, ...activityForm }); setActivityForm({ type: 'note', summary: '' }); }}} className="mt-3 rounded-xl bg-gam-orange px-4 py-2 text-sm font-semibold text-white">Add Activity</button></div>{selectedMoney ? <div className="mt-5 rounded-2xl border border-gam-peach/20 bg-gam-orange/5 p-4"><div className="text-xs uppercase tracking-[0.22em] text-white/45">Selected matter finance</div><div className="mt-2 flex items-center justify-between"><div><p className="text-sm font-semibold text-white">{selectedMatter?.title}</p><p className="mt-1 text-sm text-white/65">{selectedMoney.status}</p></div><div className="text-lg font-semibold text-emerald-300">{selectedMoney.amount}</div></div></div> : null}</Card>
+          </div>
+        </div>
+        )}
+      </div>
+    </main>
+  );
+}
