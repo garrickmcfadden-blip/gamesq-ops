@@ -99,14 +99,16 @@ export function MissionControl() {
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [editingWaitingId, setEditingWaitingId] = useState<string | null>(null);
   const [editingMoneyId, setEditingMoneyId] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
 
   const filteredMatters = useMemo(() => matters.filter((matter) => {
     const haystack = `${matter.title} ${matter.client} ${matter.sourceType ?? ''} ${matter.owner}`.toLowerCase();
     const matchesSearch = !search || haystack.includes(search.toLowerCase());
     const matchesStage = stageFilter === 'all' || matter.stage === stageFilter;
     const matchesPriority = priorityFilter === 'all' || matter.priority === priorityFilter;
-    return matchesSearch && matchesStage && matchesPriority;
-  }), [matters, priorityFilter, search, stageFilter]);
+    const matchesArchived = showArchived ? true : !matter.archived;
+    return matchesSearch && matchesStage && matchesPriority && matchesArchived;
+  }), [matters, priorityFilter, search, showArchived, stageFilter]);
 
   const directoryMatters = useMemo(() => {
     const priorityOrder = { critical: 4, high: 3, medium: 2, low: 1 };
@@ -241,7 +243,7 @@ export function MissionControl() {
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search client or matter" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
             <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value as 'all' | Stage)} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"><option value="all">all stages</option><option>Intake</option><option>Treatment</option><option>Demand</option><option>Litigation</option><option>Resolution</option></select>
             <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value as 'all' | Matter['priority'])} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"><option value="all">all priorities</option><option>critical</option><option>high</option><option>medium</option><option>low</option></select>
-            <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white/70">Showing {filteredMatters.length} of {matters.length} matters</div>
+            <button onClick={() => setShowArchived((current) => !current)} className={`rounded-xl px-3 py-2 text-sm font-medium transition ${showArchived ? 'bg-white text-gam-night' : 'border border-white/10 bg-black/20 text-white/70 hover:border-white/20 hover:bg-white/10'}`}>{showArchived ? 'Hide archived matters' : 'Show archived matters'}</button>
           </div>
           <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <label className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white">Unsigned retainer days<input type="number" value={thresholds.unsignedRetainerDays} onChange={(e) => setThresholds({ ...thresholds, unsignedRetainerDays: Number(e.target.value) || 0 })} className="mt-2 w-full border-0 bg-transparent text-white outline-none" /></label>
@@ -387,7 +389,7 @@ export function MissionControl() {
             <Card title={panels.detail.title} subtitle={panels.detail.subtitle} className="border-gam-peach/20">
               {selectedMatter ? <div className="space-y-5">
                 <div className="rounded-2xl border border-gam-peach/20 bg-gam-orange/5 p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-xl font-semibold text-white">{selectedMatter.title}</h3><p className="mt-1 text-sm text-white/65">Client: {selectedMatter.client}</p></div><div className={`rounded-full border px-3 py-1 text-xs uppercase tracking-[0.2em] ${severityClasses(selectedMatter.priority)}`}>{selectedMatter.stage}</div></div>
+                  <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-xl font-semibold text-white">{selectedMatter.title}</h3><p className="mt-1 text-sm text-white/65">Client: {selectedMatter.client}</p></div><div className="flex flex-col items-end gap-2"><div className={`rounded-full border px-3 py-1 text-xs uppercase tracking-[0.2em] ${severityClasses(selectedMatter.priority)}`}>{selectedMatter.stage}</div><button onClick={() => updateMatter(selectedMatter.id, { archived: !selectedMatter.archived, archivedAt: selectedMatter.archived ? undefined : new Date().toISOString() })} className={`rounded-xl px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition ${selectedMatter.archived ? 'border border-emerald-400/30 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/15' : 'border border-gam-peach/30 bg-gam-orange/10 text-gam-peach hover:bg-gam-orange/20'}`}>{selectedMatter.archived ? 'Restore Matter' : 'Archive Matter'}</button></div></div>
                   <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                     <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.2em] text-white/45">Stage</div><select value={selectedMatter.stage} onChange={(e) => updateMatter(selectedMatter.id, { stage: e.target.value as Stage })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none"><option>Intake</option><option>Treatment</option><option>Demand</option><option>Litigation</option><option>Resolution</option></select></label>
                     <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.2em] text-white/45">Priority</div><select value={selectedMatter.priority} onChange={(e) => updateMatter(selectedMatter.id, { priority: e.target.value as Matter['priority'] })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none"><option>critical</option><option>high</option><option>medium</option><option>low</option></select></label>
@@ -450,9 +452,207 @@ export function MissionControl() {
           </div>
 
           <div className="flex flex-col gap-6">
-            <Card title={panels.waiting.title} subtitle={panels.waiting.subtitle}><div className="space-y-3">{waitingOn.filter((item) => filteredMatters.some((matter) => matter.id === item.matterId)).map((item) => <button key={item.id} onClick={() => selectMatter(item.matterId)} className="w-full rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-left transition hover:border-white/20 hover:bg-white/[0.05]"><div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold text-white">{item.subject}</p><span className="text-xs uppercase tracking-[0.18em] text-gam-peach">{item.age}</span></div><p className="mt-2 text-sm text-white/65">{matters.find((matter) => matter.id === item.matterId)?.title}</p><p className="mt-3 text-xs uppercase tracking-[0.18em] text-white/45">Next: {item.next}</p></button>)}</div></Card>
-            <Card title={panels.money.title} subtitle={panels.money.subtitle}><div className="space-y-3">{money.filter((row) => filteredMatters.some((matter) => matter.id === row.matterId)).map((row) => <div key={row.id} className="flex items-center gap-2"><button onClick={() => selectMatter(row.matterId)} className="flex-1 rounded-2xl border border-emerald-400/20 bg-emerald-400/5 p-4 text-left transition hover:border-emerald-300/40 hover:bg-emerald-400/10"><div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold text-white">{matters.find((matter) => matter.id === row.matterId)?.title}</p><span className="text-sm font-semibold text-emerald-300">{row.amount}</span></div><p className="mt-2 text-sm text-white/65">{row.status}</p><p className="mt-3 text-xs uppercase tracking-[0.18em] text-white/45">Next: {row.next}</p></button><button onClick={() => { setEditingMoneyId(row.id); setMoneyForm({ status: row.status, amount: row.amount.replace(/[$,]/g, ''), next: row.next }); }} className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-sky-200">Edit</button><button onClick={() => { if (confirm('Delete this money item?')) void deleteMoneyItem(row.id); }} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-red-200">Delete</button></div>)}</div><div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4"><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Source Performance</h4><div className="mt-3 space-y-3">{sourceKpis.length ? sourceKpis.map((source) => <div key={source.source} className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="flex items-center justify-between gap-3"><div className="text-sm font-semibold text-white">{source.source}</div><div className="text-sm font-semibold text-emerald-300">${source.pipelineValue.toLocaleString()}</div></div><div className="mt-2 text-xs text-white/60">{source.matterCount} matters • Lead→Sign {source.avgLeadToSign !== null ? `${source.avgLeadToSign}d` : '—'} • File Age {source.avgFileAge !== null ? `${source.avgFileAge}d` : '—'}</div><div className="mt-1 text-xs text-white/45">Records→Demand {source.avgRecordsToDemand !== null ? `${source.avgRecordsToDemand}d` : '—'} • Demand→Offer {source.avgDemandToOffer !== null ? `${source.avgDemandToOffer}d` : '—'}</div></div>) : <div className="text-sm text-white/55">No source data yet.</div>}</div></div><div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4"><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">{editingMoneyId ? 'Edit Money Item' : 'Add Money Item'}</h4><div className="mt-3 grid gap-3"><input value={moneyForm.status} onChange={(e) => setMoneyForm({ ...moneyForm, status: e.target.value })} placeholder="Status" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><input value={moneyForm.amount} onChange={(e) => setMoneyForm({ ...moneyForm, amount: e.target.value })} placeholder="Amount" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><input value={moneyForm.next} onChange={(e) => setMoneyForm({ ...moneyForm, next: e.target.value })} placeholder="Next step" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /></div><div className="mt-3 flex gap-2"><button onClick={() => { if (selectedMatter && moneyForm.status.trim()) { if (editingMoneyId) { updateMoneyItem(editingMoneyId, moneyForm); setEditingMoneyId(null); } else { createMoneyItem({ matterId: selectedMatter.id, ...moneyForm }); } setMoneyForm({ status: '', amount: '', next: '' }); }}} className="rounded-xl bg-gam-orange px-4 py-2 text-sm font-semibold text-white">{editingMoneyId ? 'Save Money Item' : 'Add Money Item'}</button>{editingMoneyId ? <button onClick={() => { setEditingMoneyId(null); setMoneyForm({ status: '', amount: '', next: '' }); }} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/70">Cancel</button> : null}</div></div></Card>
-            <Card title={panels.feed.title} subtitle={panels.feed.subtitle}><div className="space-y-3">{selectedActivity.map((item, index) => <div key={item.id} className="flex gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3"><div className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-full bg-gam-orange/15 text-xs font-semibold text-gam-peach">{index + 1}</div><div><p className="text-sm text-white/80">{item.summary}</p><p className="mt-1 text-xs uppercase tracking-[0.18em] text-white/45">{item.type} • {item.createdAt}</p></div></div>)}</div><div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4"><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">KPI Drilldown</h4><div className="mt-3 grid gap-3"><div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Intake Velocity</div><div className="mt-2 text-lg font-semibold text-white">{kpis[0]?.value ?? '—'} / {kpis[1]?.value ?? '—'}</div><div className="mt-1 text-xs text-white/55">Lead to sign and retainer to sign.</div></div><div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Demand Velocity</div><div className="mt-2 text-lg font-semibold text-white">{kpis[3]?.value ?? '—'} / {kpis[4]?.value ?? '—'}</div><div className="mt-1 text-xs text-white/55">Records to demand and demand to offer.</div></div><div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Resolution Velocity</div><div className="mt-2 text-lg font-semibold text-white">{kpis[5]?.value ?? '—'}</div><div className="mt-1 text-xs text-white/55">Demand to settlement cycle time.</div></div><div className="rounded-xl border border-white/10 bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Risk & Drift</div><div className="mt-2 text-lg font-semibold text-white">{kpis[6]?.value ?? '—'} stale / {kpis[8]?.value ?? '—'} risk</div><div className="mt-1 text-xs text-white/55">Stale matters and statute risk.</div></div></div></div><div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4"><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Add Activity</h4><div className="mt-3 grid gap-3"><select value={activityForm.type} onChange={(e) => setActivityForm({ ...activityForm, type: e.target.value as ActivityItem['type'] })} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"><option value="note">note</option><option value="call">call</option><option value="email">email</option><option value="deadline">deadline</option><option value="demand">demand</option><option value="filing">filing</option><option value="settlement">settlement</option></select><textarea value={activityForm.summary} onChange={(e) => setActivityForm({ ...activityForm, summary: e.target.value })} placeholder="Summary" className="min-h-24 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /></div><button onClick={() => { if (selectedMatter && activityForm.summary.trim()) { createActivity({ matterId: selectedMatter.id, ...activityForm }); setActivityForm({ type: 'note', summary: '' }); }}} className="mt-3 rounded-xl bg-gam-orange px-4 py-2 text-sm font-semibold text-white">Add Activity</button></div>{selectedMoney ? <div className="mt-5 rounded-2xl border border-gam-peach/20 bg-gam-orange/5 p-4"><div className="text-xs uppercase tracking-[0.22em] text-white/45">Selected matter finance</div><div className="mt-2 flex items-center justify-between"><div><p className="text-sm font-semibold text-white">{selectedMatter?.title}</p><p className="mt-1 text-sm text-white/65">{selectedMoney.status}</p></div><div className="text-lg font-semibold text-emerald-300">{selectedMoney.amount}</div></div></div> : null}</Card>
+            <Card title={panels.waiting.title} subtitle={panels.waiting.subtitle}>
+              <div className="space-y-3">
+                {waitingOn
+                  .filter((item) => filteredMatters.some((matter) => matter.id === item.matterId))
+                  .map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => selectMatter(item.matterId)}
+                      className="w-full rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-left transition hover:border-white/20 hover:bg-white/[0.05]"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-white">{item.subject}</p>
+                        <span className="text-xs uppercase tracking-[0.18em] text-gam-peach">{item.age}</span>
+                      </div>
+                      <p className="mt-2 text-sm text-white/65">{matters.find((matter) => matter.id === item.matterId)?.title}</p>
+                      <p className="mt-3 text-xs uppercase tracking-[0.18em] text-white/45">Next: {item.next}</p>
+                    </button>
+                  ))}
+              </div>
+            </Card>
+
+            <Card title={panels.money.title} subtitle={panels.money.subtitle}>
+              <div className="space-y-3">
+                {money
+                  .filter((row) => filteredMatters.some((matter) => matter.id === row.matterId))
+                  .map((row) => (
+                    <div key={row.id} className="flex items-center gap-2">
+                      <button
+                        onClick={() => selectMatter(row.matterId)}
+                        className="flex-1 rounded-2xl border border-emerald-400/20 bg-emerald-400/5 p-4 text-left transition hover:border-emerald-300/40 hover:bg-emerald-400/10"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm font-semibold text-white">{matters.find((matter) => matter.id === row.matterId)?.title}</p>
+                          <span className="text-sm font-semibold text-emerald-300">{row.amount}</span>
+                        </div>
+                        <p className="mt-2 text-sm text-white/65">{row.status}</p>
+                        <p className="mt-3 text-xs uppercase tracking-[0.18em] text-white/45">Next: {row.next}</p>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditingMoneyId(row.id);
+                          setMoneyForm({ status: row.status, amount: row.amount.replace(/[$,]/g, ''), next: row.next });
+                        }}
+                        className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-sky-200"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm('Delete this money item?')) void deleteMoneyItem(row.id);
+                        }}
+                        className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-red-200"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ))}
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Source Performance</h4>
+                <div className="mt-3 space-y-3">
+                  {sourceKpis.length ? (
+                    sourceKpis.map((source) => (
+                      <div key={source.source} className="rounded-xl border border-white/10 bg-black/20 p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm font-semibold text-white">{source.source}</div>
+                          <div className="text-sm font-semibold text-emerald-300">${source.pipelineValue.toLocaleString()}</div>
+                        </div>
+                        <div className="mt-2 text-xs text-white/60">
+                          {source.matterCount} matters • Lead→Sign {source.avgLeadToSign !== null ? `${source.avgLeadToSign}d` : '—'} • File Age {source.avgFileAge !== null ? `${source.avgFileAge}d` : '—'}
+                        </div>
+                        <div className="mt-1 text-xs text-white/45">
+                          Records→Demand {source.avgRecordsToDemand !== null ? `${source.avgRecordsToDemand}d` : '—'} • Demand→Offer {source.avgDemandToOffer !== null ? `${source.avgDemandToOffer}d` : '—'}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-sm text-white/55">No source data yet.</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <h4 className="text-xs uppercase tracking-[0.22em] text-white/45">{editingMoneyId ? 'Edit Money Item' : 'Add Money Item'}</h4>
+                <div className="mt-3 grid gap-3">
+                  <input value={moneyForm.status} onChange={(e) => setMoneyForm({ ...moneyForm, status: e.target.value })} placeholder="Status" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+                  <input value={moneyForm.amount} onChange={(e) => setMoneyForm({ ...moneyForm, amount: e.target.value })} placeholder="Amount" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+                  <input value={moneyForm.next} onChange={(e) => setMoneyForm({ ...moneyForm, next: e.target.value })} placeholder="Next step" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    onClick={() => {
+                      if (selectedMatter && moneyForm.status.trim()) {
+                        if (editingMoneyId) {
+                          updateMoneyItem(editingMoneyId, moneyForm);
+                          setEditingMoneyId(null);
+                        } else {
+                          createMoneyItem({ matterId: selectedMatter.id, ...moneyForm });
+                        }
+                        setMoneyForm({ status: '', amount: '', next: '' });
+                      }
+                    }}
+                    className="rounded-xl bg-gam-orange px-4 py-2 text-sm font-semibold text-white"
+                  >
+                    {editingMoneyId ? 'Save Money Item' : 'Add Money Item'}
+                  </button>
+                  {editingMoneyId ? (
+                    <button
+                      onClick={() => {
+                        setEditingMoneyId(null);
+                        setMoneyForm({ status: '', amount: '', next: '' });
+                      }}
+                      className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/70"
+                    >
+                      Cancel
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            </Card>
+
+            <Card title={panels.feed.title} subtitle={panels.feed.subtitle}>
+              <div className="space-y-3">
+                {selectedActivity.map((item, index) => (
+                  <div key={item.id} className="flex gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
+                    <div className="mt-0.5 flex h-6 w-6 items-center justify-center rounded-full bg-gam-orange/15 text-xs font-semibold text-gam-peach">{index + 1}</div>
+                    <div>
+                      <p className="text-sm text-white/80">{item.summary}</p>
+                      <p className="mt-1 text-xs uppercase tracking-[0.18em] text-white/45">{item.type} • {item.createdAt}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <h4 className="text-xs uppercase tracking-[0.22em] text-white/45">KPI Drilldown</h4>
+                <div className="mt-3 grid gap-3">
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <div className="text-xs uppercase tracking-[0.18em] text-white/45">Intake Velocity</div>
+                    <div className="mt-2 text-lg font-semibold text-white">{kpis[0]?.value ?? '—'} / {kpis[1]?.value ?? '—'}</div>
+                    <div className="mt-1 text-xs text-white/55">Lead to sign and retainer to sign.</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <div className="text-xs uppercase tracking-[0.18em] text-white/45">Demand Velocity</div>
+                    <div className="mt-2 text-lg font-semibold text-white">{kpis[3]?.value ?? '—'} / {kpis[4]?.value ?? '—'}</div>
+                    <div className="mt-1 text-xs text-white/55">Records to demand and demand to offer.</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <div className="text-xs uppercase tracking-[0.18em] text-white/45">Resolution Velocity</div>
+                    <div className="mt-2 text-lg font-semibold text-white">{kpis[5]?.value ?? '—'}</div>
+                    <div className="mt-1 text-xs text-white/55">Demand to settlement cycle time.</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <div className="text-xs uppercase tracking-[0.18em] text-white/45">Risk & Drift</div>
+                    <div className="mt-2 text-lg font-semibold text-white">{kpis[6]?.value ?? '—'} stale / {kpis[8]?.value ?? '—'} risk</div>
+                    <div className="mt-1 text-xs text-white/55">Stale matters and statute risk.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Add Activity</h4>
+                <div className="mt-3 grid gap-3">
+                  <select value={activityForm.type} onChange={(e) => setActivityForm({ ...activityForm, type: e.target.value as ActivityItem['type'] })} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none">
+                    <option value="note">note</option>
+                    <option value="call">call</option>
+                    <option value="email">email</option>
+                    <option value="deadline">deadline</option>
+                    <option value="demand">demand</option>
+                    <option value="filing">filing</option>
+                    <option value="settlement">settlement</option>
+                  </select>
+                  <textarea value={activityForm.summary} onChange={(e) => setActivityForm({ ...activityForm, summary: e.target.value })} placeholder="Summary" className="min-h-24 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+                </div>
+                <button
+                  onClick={() => {
+                    if (selectedMatter && activityForm.summary.trim()) {
+                      createActivity({ matterId: selectedMatter.id, ...activityForm });
+                      setActivityForm({ type: 'note', summary: '' });
+                    }
+                  }}
+                  className="mt-3 rounded-xl bg-gam-orange px-4 py-2 text-sm font-semibold text-white"
+                >
+                  Add Activity
+                </button>
+              </div>
+
+              {selectedMoney ? (
+                <div className="mt-5 rounded-2xl border border-gam-peach/20 bg-gam-orange/5 p-4">
+                  <div className="text-xs uppercase tracking-[0.22em] text-white/45">Selected matter finance</div>
+                  <div className="mt-2 flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-white">{selectedMatter?.title}</p>
+                      <p className="mt-1 text-sm text-white/65">{selectedMoney.status}</p>
+                    </div>
+                    <div className="text-lg font-semibold text-emerald-300">{selectedMoney.amount}</div>
+                  </div>
+                </div>
+              ) : null}
+            </Card>
           </div>
         </div>
         )}
@@ -460,3 +660,4 @@ export function MissionControl() {
     </main>
   );
 }
+
