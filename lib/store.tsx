@@ -1,7 +1,6 @@
 'use client';
 
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { activity as seededActivity, contacts as seededContacts, matters as seededMatters, milestones as seededMilestones, money as seededMoney, tasks as seededTasks, today as seededEvents, waitingOn as seededWaitingOn } from '@/lib/data';
 import { fetchAppSettings, createActivityRecord, createContactRecord, createEventRecord, createMatterNoteRecord, createMatterRecord, createMoneyItemRecord, createTaskRecord, createWaitingItemRecord, deleteEventRecord, deleteMatterNoteRecord, deleteMoneyItemRecord, deleteTaskRecord, deleteWaitingItemRecord, fetchActivity, fetchContacts, fetchEvents, fetchMatterMilestones, fetchMatters, fetchMoneyItems, fetchTasks, fetchWaitingItems, updateEventRecord, updateMatterRecord, updateMoneyItemRecord, updateTaskRecord, updateWaitingItemRecord, upsertAppSetting, upsertMatterMilestoneRecord } from '@/lib/db';
 import { defaultThresholds, KPIThresholds } from '@/lib/settings';
 import { ActivityItem, Contact, EventItem, Matter, MatterMilestone, MoneyItem, Task, TaskStatus, WaitingItem } from '@/lib/types';
@@ -75,16 +74,16 @@ function sortEventsByStart(events: EventItem[]) {
 }
 
 export function MissionControlProvider({ children }: { children: React.ReactNode }) {
-  const [matters, setMatters] = useState<Matter[]>(seededMatters);
-  const [contacts, setContacts] = useState<Contact[]>(seededContacts);
-  const [tasks, setTasks] = useState<Task[]>(seededTasks);
-  const [waitingOn, setWaitingOn] = useState<WaitingItem[]>(seededWaitingOn);
-  const [events, setEvents] = useState<EventItem[]>(seededEvents);
-  const [money, setMoney] = useState<MoneyItem[]>(seededMoney);
-  const [activity, setActivity] = useState<ActivityItem[]>(seededActivity);
-  const [milestones, setMilestones] = useState<MatterMilestone[]>(seededMilestones);
+  const [matters, setMatters] = useState<Matter[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [waitingOn, setWaitingOn] = useState<WaitingItem[]>([]);
+  const [events, setEvents] = useState<EventItem[]>([]);
+  const [money, setMoney] = useState<MoneyItem[]>([]);
+  const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [milestones, setMilestones] = useState<MatterMilestone[]>([]);
   const [thresholds, setThresholdsState] = useState<KPIThresholds>(defaultThresholds);
-  const [selectedMatterId, setSelectedMatterId] = useState(seededMatters[0]?.id ?? '');
+  const [selectedMatterId, setSelectedMatterId] = useState('');
   const [hydrated, setHydrated] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>({ type: 'idle' });
 
@@ -103,17 +102,18 @@ export function MissionControlProvider({ children }: { children: React.ReactNode
           fetchMatters(), fetchContacts(), fetchTasks(), fetchWaitingItems(), fetchEvents(), fetchMoneyItems(), fetchActivity(), fetchMatterMilestones(), fetchAppSettings(),
         ]);
         if (!active) return;
-        if (mattersData.length) {
-          setMatters(mattersData);
-          setSelectedMatterId((current) => current || mattersData[0].id);
-        }
-        if (contactsData.length) setContacts(contactsData);
-        if (tasksData.length) setTasks(tasksData);
-        if (waitingData.length) setWaitingOn(waitingData);
-        if (eventsData.length) setEvents(sortEventsByStart(eventsData));
-        if (moneyData.length) setMoney(moneyData);
-        if (activityData.length) setActivity(activityData);
-        if (milestoneData.length) setMilestones(milestoneData);
+        setMatters(mattersData);
+        setSelectedMatterId((current) => {
+          if (current && mattersData.some((matter) => matter.id === current)) return current;
+          return mattersData[0]?.id ?? '';
+        });
+        setContacts(contactsData);
+        setTasks(tasksData);
+        setWaitingOn(waitingData);
+        setEvents(sortEventsByStart(eventsData));
+        setMoney(moneyData);
+        setActivity(activityData);
+        setMilestones(milestoneData);
         const thresholdSetting = appSettings.find((row: { key: string; value: KPIThresholds }) => row.key === 'kpi_thresholds');
         if (thresholdSetting?.value) setThresholdsState({ ...defaultThresholds, ...thresholdSetting.value });
       } catch {
