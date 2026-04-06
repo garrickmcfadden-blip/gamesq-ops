@@ -21,6 +21,8 @@ export interface Matter {
   sourceType?: string;
   sourceDetail?: string;
   campaign?: string;
+  archived?: boolean;
+  archivedAt?: string;
   notes: string[];
 }
 

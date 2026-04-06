@@ -185,7 +185,7 @@ export function MissionControlProvider({ children }: { children: React.ReactNode
       const optimisticMatter: Matter = {
         id: optimisticId, title: input.title, client: input.client, stage: input.stage, priority: input.priority, status: input.status,
         owner: input.owner, lastActivity: 'Matter created in Mission Control', nextAction: input.nextAction, blocker: input.blocker,
-        value: formatCurrency(input.projectedValue), incidentDate: input.incidentDate || '', statute: input.statute || '', sourceType: undefined, sourceDetail: undefined, campaign: undefined, notes: [],
+        value: formatCurrency(input.projectedValue), incidentDate: input.incidentDate || '', statute: input.statute || '', sourceType: undefined, sourceDetail: undefined, campaign: undefined, archived: false, archivedAt: undefined, notes: [],
       };
       setMatters((current) => [optimisticMatter, ...current]);
       setSelectedMatterId(optimisticId);

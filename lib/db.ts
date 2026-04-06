@@ -93,6 +93,8 @@ export async function updateMatterRecord(matterId: string, updates: Partial<Matt
   if (updates.sourceType !== undefined) payload.source_type = updates.sourceType || null;
   if (updates.sourceDetail !== undefined) payload.source_detail = updates.sourceDetail || null;
   if (updates.campaign !== undefined) payload.campaign = updates.campaign || null;
+  if (updates.archived !== undefined) payload.archived = updates.archived;
+  if (updates.archivedAt !== undefined) payload.archived_at = updates.archivedAt || null;
   const { error } = await supabase.from('matters').update(payload).eq('id', matterId);
   if (error) throw error;
 }
