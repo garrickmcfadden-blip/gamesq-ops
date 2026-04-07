@@ -219,6 +219,11 @@ export async function createEventRecord(input: { matterId?: string; title: strin
 export async function upsertMatterMilestoneRecord(matterId: string, updates: Partial<MatterMilestone>) {
   const payload: Record<string, unknown> = { matter_id: matterId };
   if (updates.leadCreatedAt !== undefined) payload.lead_created_at = updates.leadCreatedAt || null;
+  if (updates.letterOfRepSentAt !== undefined) payload.letter_of_rep_sent_at = updates.letterOfRepSentAt || null;
+  if (updates.adjusterNotice2WeekAt !== undefined) payload.adjuster_notice_2_week_at = updates.adjusterNotice2WeekAt || null;
+  if (updates.adjusterNotice30DayAt !== undefined) payload.adjuster_notice_30_day_at = updates.adjusterNotice30DayAt || null;
+  if (updates.adjusterNotice60DayAt !== undefined) payload.adjuster_notice_60_day_at = updates.adjusterNotice60DayAt || null;
+  if (updates.adjusterNotice90DayAt !== undefined) payload.adjuster_notice_90_day_at = updates.adjusterNotice90DayAt || null;
   if (updates.retainerSentAt !== undefined) payload.retainer_sent_at = updates.retainerSentAt || null;
   if (updates.retainerSignedAt !== undefined) payload.retainer_signed_at = updates.retainerSignedAt || null;
   if (updates.recordsFirstOrderedAt !== undefined) payload.records_first_ordered_at = updates.recordsFirstOrderedAt || null;
@@ -236,6 +241,11 @@ export async function fetchMatterMilestones(): Promise<MatterMilestone[]> {
   return (data ?? []).map((row) => ({
     matterId: row.matter_id,
     leadCreatedAt: row.lead_created_at ?? undefined,
+    letterOfRepSentAt: row.letter_of_rep_sent_at ?? undefined,
+    adjusterNotice2WeekAt: row.adjuster_notice_2_week_at ?? undefined,
+    adjusterNotice30DayAt: row.adjuster_notice_30_day_at ?? undefined,
+    adjusterNotice60DayAt: row.adjuster_notice_60_day_at ?? undefined,
+    adjusterNotice90DayAt: row.adjuster_notice_90_day_at ?? undefined,
     retainerSentAt: row.retainer_sent_at ?? undefined,
     retainerSignedAt: row.retainer_signed_at ?? undefined,
     recordsFirstOrderedAt: row.records_first_ordered_at ?? undefined,

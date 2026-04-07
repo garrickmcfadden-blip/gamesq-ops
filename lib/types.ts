@@ -83,6 +83,11 @@ export interface ActivityItem {
 export interface MatterMilestone {
   matterId: string;
   leadCreatedAt?: string;
+  letterOfRepSentAt?: string;
+  adjusterNotice2WeekAt?: string;
+  adjusterNotice30DayAt?: string;
+  adjusterNotice60DayAt?: string;
+  adjusterNotice90DayAt?: string;
   retainerSentAt?: string;
   retainerSignedAt?: string;
   recordsFirstOrderedAt?: string;
