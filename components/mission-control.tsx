@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { stats } from '@/lib/data';
 import { buildKpis, buildSourceKpis, buildWarnings, matterTiming } from '@/lib/kpi';
 import { KPIThresholds } from '@/lib/settings';
 import { SaveStatusBanner } from '@/components/save-status';
@@ -77,6 +76,44 @@ function taskUrgencyWeight(due: string) {
   return 20;
 }
 
+function parseDateLike(value?: string) {
+  if (!value) return null;
+  const direct = new Date(value);
+  if (!Number.isNaN(direct.getTime())) return direct;
+  const slash = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (slash) {
+    const [, mm, dd, yyyy] = slash;
+    return new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+  }
+  return null;
+}
+
+function countWaitingAgeDays(age?: string) {
+  if (!age) return 0;
+  const match = age.match(/(\d+)/);
+  return match ? Number(match[1]) : 0;
+}
+
+function parseCurrencyAmount(value?: string) {
+  if (!value) return 0;
+  return Number(value.replace(/[^\d.-]/g, '')) || 0;
+}
+
+function formatCompactCurrency(value: number) {
+  if (!value) return '$0';
+  if (value >= 1000) {
+    const compact = value / 1000;
+    const rounded = Number.isInteger(compact) ? String(compact) : compact.toFixed(1).replace(/\.0$/, '');
+    return `$${rounded}k`;
+  }
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);
+}
+
+function isImminentStep(next?: string) {
+  if (!next) return false;
+  return /(today|tomorrow|this week|immediate|imminent|asap|urgent|call|follow up|follow-up|review|finalize|sign|send)/i.test(next);
+}
+
 export function MissionControl() {
   const { matters, contacts, tasks, waitingOn, events, money, activity, milestones, thresholds, setThresholds, selectedMatterId, setSelectedMatterId, updateMatter, updateMatterMilestone, updateTaskStatus, createTask, createMatter, createContact, createWaitingItem, createActivity, createMoneyItem, createMatterNote, createEvent, deleteTask, deleteEvent, deleteWaitingItem, deleteMoneyItem, deleteMatterNote, updateEvent, updateWaitingItem, updateMoneyItem, saveStatus } = useMissionControl();
   const [activeView, setActiveView] = useState<'mission' | 'directory'>('mission');
@@ -119,6 +156,48 @@ export function MissionControl() {
       return priorityOrder[b.priority] - priorityOrder[a.priority];
     });
   }, [directorySort, filteredMatters]);
+
+  const summaryStats = useMemo(() => {
+    const activeMatters = matters.filter((matter) => !matter.archived);
+    const now = new Date();
+    const weekAgo = new Date(now);
+    weekAgo.setDate(weekAgo.getDate() - 7);
+
+    const newThisWeek = activeMatters.filter((matter) => {
+      const created = parseDateLike(matter.createdAt);
+      return created ? created >= weekAgo : false;
+    }).length;
+
+    const overdueTasks = tasks.filter((task) => task.status !== 'done' && taskUrgencyWeight(task.due) >= 100);
+    const statuteRiskMatters = activeMatters.filter((matter) => {
+      const statute = parseDateLike(matter.statute);
+      if (!statute) return false;
+      const diff = Math.ceil((statute.getTime() - now.getTime()) / 86400000);
+      return diff <= 60;
+    });
+
+    const urgentMatterIds = new Set<string>();
+    activeMatters.forEach((matter) => {
+      if (matter.priority === 'critical' || matter.priority === 'high') urgentMatterIds.add(matter.id);
+    });
+    overdueTasks.forEach((task) => urgentMatterIds.add(task.matterId));
+    statuteRiskMatters.forEach((matter) => urgentMatterIds.add(matter.id));
+
+    const needGarrick = activeMatters.filter((matter) => urgentMatterIds.has(matter.id) && /garrick/i.test(matter.owner)).length;
+
+    const waitingCount = waitingOn.length;
+    const waitingStale = waitingOn.filter((item) => countWaitingAgeDays(item.age) > 7).length;
+
+    const feesInPipeline = money.reduce((sum, item) => sum + parseCurrencyAmount(item.amount), 0);
+    const likelyThirty = money.filter((item) => isImminentStep(item.next)).reduce((sum, item) => sum + parseCurrencyAmount(item.amount), 0);
+
+    return [
+      { label: 'Active matters', value: String(activeMatters.length), delta: `${newThisWeek >= 0 ? '+' : ''}${newThisWeek} this week` },
+      { label: 'Urgent items', value: String(urgentMatterIds.size), delta: `${needGarrick} need Garrick` },
+      { label: 'Waiting on others', value: String(waitingCount), delta: `${waitingStale} stale > 7 days` },
+      { label: 'Fees in pipeline', value: formatCompactCurrency(feesInPipeline), delta: `${formatCompactCurrency(likelyThirty)} likely < 30d` },
+    ];
+  }, [matters, money, tasks, waitingOn]);
 
   const pipeline = useMemo(() => stageOrder.map((stage) => {
     const inStage = filteredMatters.filter((matter) => matter.stage === stage);
@@ -226,7 +305,7 @@ export function MissionControl() {
             <div className="flex items-center gap-3">
               <button onClick={() => setShowNewMatter((v) => !v)} className="rounded-2xl bg-gam-orange px-4 py-3 text-sm font-semibold text-white transition hover:brightness-110">{showNewMatter ? 'Close New Matter' : 'New Matter'}</button>
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                {stats.map((stat) => (
+                {summaryStats.map((stat) => (
                   <div key={stat.label} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
                     <div className="text-xs uppercase tracking-[0.22em] text-white/50">{stat.label}</div>
                     <div className="mt-2 text-2xl font-semibold text-white">{stat.value}</div>

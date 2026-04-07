@@ -36,6 +36,9 @@ export async function fetchMatters(): Promise<Matter[]> {
     sourceType: row.source_type ?? undefined,
     sourceDetail: row.source_detail ?? undefined,
     campaign: row.campaign ?? undefined,
+    archived: row.archived ?? false,
+    archivedAt: row.archived_at ?? undefined,
+    createdAt: row.created_at ?? undefined,
     notes: notesMap.get(row.id) ?? [],
   }));
 }

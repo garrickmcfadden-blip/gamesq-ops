@@ -23,6 +23,7 @@ export interface Matter {
   campaign?: string;
   archived?: boolean;
   archivedAt?: string;
+  createdAt?: string;
   notes: string[];
 }
 
