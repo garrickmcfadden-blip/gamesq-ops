@@ -20,6 +20,11 @@ create table if not exists matters (
   projected_value numeric(12,2),
   incident_date date,
   statute_date date,
+  source_type text,
+  source_detail text,
+  campaign text,
+  archived boolean not null default false,
+  archived_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -91,8 +96,48 @@ create table if not exists matter_notes (
   created_at timestamptz not null default now()
 );
 
+create table if not exists matter_milestones (
+  matter_id uuid primary key references matters(id) on delete cascade,
+  lead_created_at timestamptz,
+  letter_of_rep_sent_at timestamptz,
+  adjuster_notice_2_week_at timestamptz,
+  adjuster_notice_30_day_at timestamptz,
+  adjuster_notice_60_day_at timestamptz,
+  adjuster_notice_90_day_at timestamptz,
+  retainer_sent_at timestamptz,
+  retainer_signed_at timestamptz,
+  records_first_ordered_at timestamptz,
+  records_received_at timestamptz,
+  demand_sent_at timestamptz,
+  first_offer_at timestamptz,
+  defendant_answer_received_at timestamptz,
+  disclosure_statement_sent_at timestamptz,
+  first_discovery_sent_at timestamptz,
+  settlement_reached_at timestamptz,
+  settlement_paperwork_received_at timestamptz,
+  settlement_paperwork_sent_at timestamptz,
+  settlement_check_received_at timestamptz,
+  client_check_sent_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists app_settings (
+  key text primary key,
+  value jsonb not null,
+  updated_at timestamptz not null default now()
+);
+
 create index if not exists idx_tasks_matter_id on tasks(matter_id);
 create index if not exists idx_tasks_status on tasks(status);
 create index if not exists idx_waiting_items_matter_id on waiting_items(matter_id);
 create index if not exists idx_events_starts_at on events(starts_at);
 create index if not exists idx_activity_log_matter_id on activity_log(matter_id);
+create index if not exists idx_matters_archived on matters(archived);
+create index if not exists idx_matter_milestones_retainer_signed_at on matter_milestones(retainer_signed_at);
+create index if not exists idx_matter_milestones_demand_sent_at on matter_milestones(demand_sent_at);
+create index if not exists idx_matter_milestones_letter_of_rep_sent_at on matter_milestones(letter_of_rep_sent_at);
+create index if not exists idx_matter_milestones_defendant_answer_received_at on matter_milestones(defendant_answer_received_at);
+create index if not exists idx_matter_milestones_disclosure_statement_sent_at on matter_milestones(disclosure_statement_sent_at);
+create index if not exists idx_matter_milestones_first_discovery_sent_at on matter_milestones(first_discovery_sent_at);
+create index if not exists idx_matter_milestones_settlement_paperwork_received_at on matter_milestones(settlement_paperwork_received_at);
+create index if not exists idx_matter_milestones_client_check_sent_at on matter_milestones(client_check_sent_at);

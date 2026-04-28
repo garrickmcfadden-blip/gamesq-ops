@@ -1,0 +1,5 @@
+alter table matter_milestones add column if not exists defendant_answer_received_at timestamptz;
+alter table matter_milestones add column if not exists disclosure_statement_sent_at timestamptz;
+
+create index if not exists idx_matter_milestones_defendant_answer_received_at on matter_milestones(defendant_answer_received_at);
+create index if not exists idx_matter_milestones_disclosure_statement_sent_at on matter_milestones(disclosure_statement_sent_at);

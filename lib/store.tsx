@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { fetchAppSettings, createActivityRecord, createContactRecord, createEventRecord, createMatterNoteRecord, createMatterRecord, createMoneyItemRecord, createTaskRecord, createWaitingItemRecord, deleteEventRecord, deleteMatterNoteRecord, deleteMoneyItemRecord, deleteTaskRecord, deleteWaitingItemRecord, fetchActivity, fetchContacts, fetchEvents, fetchMatterMilestones, fetchMatters, fetchMoneyItems, fetchTasks, fetchWaitingItems, updateEventRecord, updateMatterRecord, updateMoneyItemRecord, updateTaskRecord, updateWaitingItemRecord, upsertAppSetting, upsertMatterMilestoneRecord } from '@/lib/db';
 import { defaultThresholds, KPIThresholds } from '@/lib/settings';
 import { ActivityItem, Contact, EventItem, Matter, MatterMilestone, MoneyItem, Task, TaskStatus, WaitingItem } from '@/lib/types';
@@ -46,7 +46,7 @@ interface MissionControlContextValue {
   deleteEvent: (eventId: string) => Promise<void>;
   deleteWaitingItem: (waitingItemId: string) => Promise<void>;
   deleteMoneyItem: (moneyItemId: string) => Promise<void>;
-  deleteMatterNote: (matterId: string, body: string) => Promise<void>;
+  deleteMatterNote: (noteId: string) => Promise<void>;
   updateEvent: (eventId: string, input: { title: string; kind: string; startsAt?: string }) => Promise<void>;
   updateWaitingItem: (waitingItemId: string, input: { subject: string; waitingOn: string; age?: string; next?: string }) => Promise<void>;
   updateMoneyItem: (moneyItemId: string, input: { status: string; amount?: string; next?: string }) => Promise<void>;
@@ -87,51 +87,56 @@ export function MissionControlProvider({ children }: { children: React.ReactNode
   const [hydrated, setHydrated] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>({ type: 'idle' });
 
-  function pulseStatus(status: SaveStatus) {
+  const pulseStatus = useCallback((status: SaveStatus) => {
     setSaveStatus(status);
     if (status.type === 'success' || status.type === 'error') {
       window.setTimeout(() => setSaveStatus({ type: 'idle' }), 2500);
     }
-  }
+  }, []);
+
+  const refreshData = useCallback(async () => {
+    const [mattersData, contactsData, tasksData, waitingData, eventsData, moneyData, activityData, milestoneData, appSettings] = await Promise.all([
+      fetchMatters(), fetchContacts(), fetchTasks(), fetchWaitingItems(), fetchEvents(), fetchMoneyItems(), fetchActivity(), fetchMatterMilestones(), fetchAppSettings(),
+    ]);
+    setMatters(mattersData);
+    setSelectedMatterId((current) => {
+      if (current && mattersData.some((matter) => matter.id === current)) return current;
+      return mattersData[0]?.id ?? '';
+    });
+    setContacts(contactsData);
+    setTasks(tasksData);
+    setWaitingOn(waitingData);
+    setEvents(sortEventsByStart(eventsData));
+    setMoney(moneyData);
+    setActivity(activityData);
+    setMilestones(milestoneData);
+    const thresholdSetting = appSettings.find((row: { key: string; value: KPIThresholds }) => row.key === 'kpi_thresholds');
+    if (thresholdSetting?.value) setThresholdsState({ ...defaultThresholds, ...thresholdSetting.value });
+  }, []);
 
   useEffect(() => {
     let active = true;
     async function hydrate() {
       try {
-        const [mattersData, contactsData, tasksData, waitingData, eventsData, moneyData, activityData, milestoneData, appSettings] = await Promise.all([
-          fetchMatters(), fetchContacts(), fetchTasks(), fetchWaitingItems(), fetchEvents(), fetchMoneyItems(), fetchActivity(), fetchMatterMilestones(), fetchAppSettings(),
-        ]);
         if (!active) return;
-        setMatters(mattersData);
-        setSelectedMatterId((current) => {
-          if (current && mattersData.some((matter) => matter.id === current)) return current;
-          return mattersData[0]?.id ?? '';
-        });
-        setContacts(contactsData);
-        setTasks(tasksData);
-        setWaitingOn(waitingData);
-        setEvents(sortEventsByStart(eventsData));
-        setMoney(moneyData);
-        setActivity(activityData);
-        setMilestones(milestoneData);
-        const thresholdSetting = appSettings.find((row: { key: string; value: KPIThresholds }) => row.key === 'kpi_thresholds');
-        if (thresholdSetting?.value) setThresholdsState({ ...defaultThresholds, ...thresholdSetting.value });
-      } catch {
+        await refreshData();
+      } catch (error) {
+        if (active) pulseStatus({ type: 'error', message: error instanceof Error ? error.message : 'Mission Control failed to load.' });
       } finally {
         if (active) setHydrated(true);
       }
     }
     hydrate();
     return () => { active = false; };
-  }, []);
+  }, [pulseStatus, refreshData]);
 
-  function setThresholds(thresholds: KPIThresholds) {
+  const setThresholds = useCallback((thresholds: KPIThresholds) => {
     setThresholdsState(thresholds);
     pulseStatus({ type: 'saving', message: 'Saving threshold settings…' });
     void upsertAppSetting('kpi_thresholds', thresholds)
       .then(() => pulseStatus({ type: 'success', message: 'Threshold settings saved.' }))
       .catch(() => pulseStatus({ type: 'error', message: 'Threshold settings failed to save.' }));
-  }
+  }, [pulseStatus]);
 
   const value = useMemo<MissionControlContextValue>(() => ({
     matters, contacts, tasks, waitingOn, events, money, activity, milestones, thresholds, setThresholds, selectedMatterId, setSelectedMatterId, hydrated, saveStatus,
@@ -142,6 +147,7 @@ export function MissionControlProvider({ children }: { children: React.ReactNode
         await updateMatterRecord(matterId, updates);
         pulseStatus({ type: 'success', message: 'Matter changes saved.' });
       } catch {
+        void refreshData();
         pulseStatus({ type: 'error', message: 'Matter changes failed to save.' });
       }
     },
@@ -156,6 +162,7 @@ export function MissionControlProvider({ children }: { children: React.ReactNode
         await upsertMatterMilestoneRecord(matterId, updates);
         pulseStatus({ type: 'success', message: 'Milestone saved.' });
       } catch {
+        void refreshData();
         pulseStatus({ type: 'error', message: 'Milestone failed to save.' });
       }
     },
@@ -166,6 +173,7 @@ export function MissionControlProvider({ children }: { children: React.ReactNode
         await updateTaskRecord(taskId, status);
         pulseStatus({ type: 'success', message: 'Task status saved.' });
       } catch {
+        void refreshData();
         pulseStatus({ type: 'error', message: 'Task status failed to save.' });
       }
     },
@@ -177,6 +185,7 @@ export function MissionControlProvider({ children }: { children: React.ReactNode
         await createTaskRecord(task);
         pulseStatus({ type: 'success', message: 'Task saved.' });
       } catch {
+        void refreshData();
         pulseStatus({ type: 'error', message: 'Task failed to save.' });
       }
     },
@@ -196,6 +205,7 @@ export function MissionControlProvider({ children }: { children: React.ReactNode
         setSelectedMatterId(data.id);
         pulseStatus({ type: 'success', message: 'Matter created.' });
       } catch {
+        void refreshData();
         pulseStatus({ type: 'error', message: 'Matter failed to create.' });
       }
     },
@@ -203,78 +213,96 @@ export function MissionControlProvider({ children }: { children: React.ReactNode
       const optimistic: Contact = { id: `contact-${crypto.randomUUID()}`, ...input };
       setContacts((current) => [optimistic, ...current]);
       pulseStatus({ type: 'saving', message: 'Saving contact…' });
-      try { await createContactRecord(input); pulseStatus({ type: 'success', message: 'Contact saved.' }); } catch { pulseStatus({ type: 'error', message: 'Contact failed to save.' }); }
+      try { await createContactRecord(input); pulseStatus({ type: 'success', message: 'Contact saved.' }); } catch { void refreshData(); pulseStatus({ type: 'error', message: 'Contact failed to save.' }); }
     },
     createWaitingItem: async (input) => {
       const optimistic: WaitingItem = { id: `waiting-${crypto.randomUUID()}`, matterId: input.matterId, subject: input.subject, waitingOn: input.waitingOn, age: input.age || '', next: input.next || '' };
       setWaitingOn((current) => [optimistic, ...current]);
       pulseStatus({ type: 'saving', message: 'Saving waiting item…' });
-      try { await createWaitingItemRecord(input); pulseStatus({ type: 'success', message: 'Waiting item saved.' }); } catch { pulseStatus({ type: 'error', message: 'Waiting item failed to save.' }); }
+      try { await createWaitingItemRecord(input); pulseStatus({ type: 'success', message: 'Waiting item saved.' }); } catch { void refreshData(); pulseStatus({ type: 'error', message: 'Waiting item failed to save.' }); }
     },
     createActivity: async (input) => {
       const optimistic: ActivityItem = { id: `activity-${crypto.randomUUID()}`, matterId: input.matterId, type: input.type, summary: input.summary, createdAt: new Date().toLocaleString() };
       setActivity((current) => [optimistic, ...current]);
       pulseStatus({ type: 'saving', message: 'Saving activity…' });
-      try { await createActivityRecord(input); pulseStatus({ type: 'success', message: 'Activity saved.' }); } catch { pulseStatus({ type: 'error', message: 'Activity failed to save.' }); }
+      try { await createActivityRecord(input); pulseStatus({ type: 'success', message: 'Activity saved.' }); } catch { void refreshData(); pulseStatus({ type: 'error', message: 'Activity failed to save.' }); }
     },
     createMoneyItem: async (input) => {
       const optimistic: MoneyItem = { id: `money-${crypto.randomUUID()}`, matterId: input.matterId, status: input.status, amount: formatCurrency(input.amount), next: input.next || '' };
       setMoney((current) => [optimistic, ...current]);
       pulseStatus({ type: 'saving', message: 'Saving money item…' });
-      try { await createMoneyItemRecord(input); pulseStatus({ type: 'success', message: 'Money item saved.' }); } catch { pulseStatus({ type: 'error', message: 'Money item failed to save.' }); }
+      try { await createMoneyItemRecord(input); pulseStatus({ type: 'success', message: 'Money item saved.' }); } catch { void refreshData(); pulseStatus({ type: 'error', message: 'Money item failed to save.' }); }
     },
     createMatterNote: async (input) => {
-      setMatters((current) => current.map((matter) => matter.id === input.matterId ? { ...matter, notes: [input.body, ...matter.notes] } : matter));
+      const optimisticNote = { id: `note-${crypto.randomUUID()}`, matterId: input.matterId, body: input.body, createdAt: new Date().toISOString() };
+      setMatters((current) => current.map((matter) => matter.id === input.matterId ? { ...matter, notes: [optimisticNote, ...matter.notes] } : matter));
       pulseStatus({ type: 'saving', message: 'Saving note…' });
-      try { await createMatterNoteRecord(input); pulseStatus({ type: 'success', message: 'Note saved.' }); } catch { pulseStatus({ type: 'error', message: 'Note failed to save.' }); }
+      try {
+        const savedNote = await createMatterNoteRecord(input);
+        setMatters((current) => current.map((matter) => matter.id === input.matterId ? { ...matter, notes: matter.notes.map((note) => note.id === optimisticNote.id ? savedNote : note) } : matter));
+        pulseStatus({ type: 'success', message: 'Note saved.' });
+      } catch {
+        setMatters((current) => current.map((matter) => matter.id === input.matterId ? { ...matter, notes: matter.notes.filter((note) => note.id !== optimisticNote.id) } : matter));
+        pulseStatus({ type: 'error', message: 'Note failed to save.' });
+      }
     },
     createEvent: async (input) => {
       const optimistic: EventItem = { id: `event-${crypto.randomUUID()}`, matterId: input.matterId, title: input.title, type: input.kind, time: formatEventTime(input.startsAt), startsAt: input.startsAt };
       setEvents((current) => sortEventsByStart([optimistic, ...current]));
       pulseStatus({ type: 'saving', message: 'Saving event…' });
-      try { await createEventRecord(input); pulseStatus({ type: 'success', message: 'Event saved.' }); } catch { pulseStatus({ type: 'error', message: 'Event failed to save.' }); }
+      try { await createEventRecord(input); pulseStatus({ type: 'success', message: 'Event saved.' }); } catch { void refreshData(); pulseStatus({ type: 'error', message: 'Event failed to save.' }); }
     },
     deleteTask: async (taskId) => {
       setTasks((current) => current.filter((task) => task.id !== taskId));
       pulseStatus({ type: 'saving', message: 'Deleting task…' });
-      try { await deleteTaskRecord(taskId); pulseStatus({ type: 'success', message: 'Task deleted.' }); } catch { pulseStatus({ type: 'error', message: 'Task failed to delete.' }); }
+      try { await deleteTaskRecord(taskId); pulseStatus({ type: 'success', message: 'Task deleted.' }); } catch { void refreshData(); pulseStatus({ type: 'error', message: 'Task failed to delete.' }); }
     },
     deleteEvent: async (eventId) => {
       setEvents((current) => current.filter((event) => event.id !== eventId));
       pulseStatus({ type: 'saving', message: 'Deleting event…' });
-      try { await deleteEventRecord(eventId); pulseStatus({ type: 'success', message: 'Event deleted.' }); } catch { pulseStatus({ type: 'error', message: 'Event failed to delete.' }); }
+      try { await deleteEventRecord(eventId); pulseStatus({ type: 'success', message: 'Event deleted.' }); } catch { void refreshData(); pulseStatus({ type: 'error', message: 'Event failed to delete.' }); }
     },
     deleteWaitingItem: async (waitingItemId) => {
       setWaitingOn((current) => current.filter((item) => item.id !== waitingItemId));
       pulseStatus({ type: 'saving', message: 'Deleting waiting item…' });
-      try { await deleteWaitingItemRecord(waitingItemId); pulseStatus({ type: 'success', message: 'Waiting item deleted.' }); } catch { pulseStatus({ type: 'error', message: 'Waiting item failed to delete.' }); }
+      try { await deleteWaitingItemRecord(waitingItemId); pulseStatus({ type: 'success', message: 'Waiting item deleted.' }); } catch { void refreshData(); pulseStatus({ type: 'error', message: 'Waiting item failed to delete.' }); }
     },
     deleteMoneyItem: async (moneyItemId) => {
       setMoney((current) => current.filter((item) => item.id !== moneyItemId));
       pulseStatus({ type: 'saving', message: 'Deleting money item…' });
-      try { await deleteMoneyItemRecord(moneyItemId); pulseStatus({ type: 'success', message: 'Money item deleted.' }); } catch { pulseStatus({ type: 'error', message: 'Money item failed to delete.' }); }
+      try { await deleteMoneyItemRecord(moneyItemId); pulseStatus({ type: 'success', message: 'Money item deleted.' }); } catch { void refreshData(); pulseStatus({ type: 'error', message: 'Money item failed to delete.' }); }
     },
-    deleteMatterNote: async (matterId, body) => {
-      setMatters((current) => current.map((matter) => matter.id === matterId ? { ...matter, notes: matter.notes.filter((note) => note !== body) } : matter));
+    deleteMatterNote: async (noteId) => {
+      const existingMatter = matters.find((matter) => matter.notes.some((note) => note.id === noteId));
+      const existingNote = existingMatter?.notes.find((note) => note.id === noteId);
+      setMatters((current) => current.map((matter) => ({ ...matter, notes: matter.notes.filter((note) => note.id !== noteId) })));
       pulseStatus({ type: 'saving', message: 'Deleting note…' });
-      try { await deleteMatterNoteRecord(matterId, body); pulseStatus({ type: 'success', message: 'Note deleted.' }); } catch { pulseStatus({ type: 'error', message: 'Note failed to delete.' }); }
+      try {
+        await deleteMatterNoteRecord(noteId);
+        pulseStatus({ type: 'success', message: 'Note deleted.' });
+      } catch {
+        if (existingMatter && existingNote) {
+          setMatters((current) => current.map((matter) => matter.id === existingMatter.id ? { ...matter, notes: [existingNote, ...matter.notes] } : matter));
+        }
+        pulseStatus({ type: 'error', message: 'Note failed to delete.' });
+      }
     },
     updateEvent: async (eventId, input) => {
       setEvents((current) => sortEventsByStart(current.map((event) => event.id === eventId ? { ...event, title: input.title, type: input.kind, startsAt: input.startsAt, time: formatEventTime(input.startsAt) } : event)));
       pulseStatus({ type: 'saving', message: 'Saving event changes…' });
-      try { await updateEventRecord(eventId, input); pulseStatus({ type: 'success', message: 'Event updated.' }); } catch { pulseStatus({ type: 'error', message: 'Event failed to update.' }); }
+      try { await updateEventRecord(eventId, input); pulseStatus({ type: 'success', message: 'Event updated.' }); } catch { void refreshData(); pulseStatus({ type: 'error', message: 'Event failed to update.' }); }
     },
     updateWaitingItem: async (waitingItemId, input) => {
       setWaitingOn((current) => current.map((item) => item.id === waitingItemId ? { ...item, subject: input.subject, waitingOn: input.waitingOn, age: input.age || '', next: input.next || '' } : item));
       pulseStatus({ type: 'saving', message: 'Saving waiting item changes…' });
-      try { await updateWaitingItemRecord(waitingItemId, input); pulseStatus({ type: 'success', message: 'Waiting item updated.' }); } catch { pulseStatus({ type: 'error', message: 'Waiting item failed to update.' }); }
+      try { await updateWaitingItemRecord(waitingItemId, input); pulseStatus({ type: 'success', message: 'Waiting item updated.' }); } catch { void refreshData(); pulseStatus({ type: 'error', message: 'Waiting item failed to update.' }); }
     },
     updateMoneyItem: async (moneyItemId, input) => {
       setMoney((current) => current.map((item) => item.id === moneyItemId ? { ...item, status: input.status, amount: formatCurrency(input.amount), next: input.next || '' } : item));
       pulseStatus({ type: 'saving', message: 'Saving money item changes…' });
-      try { await updateMoneyItemRecord(moneyItemId, input); pulseStatus({ type: 'success', message: 'Money item updated.' }); } catch { pulseStatus({ type: 'error', message: 'Money item failed to update.' }); }
+      try { await updateMoneyItemRecord(moneyItemId, input); pulseStatus({ type: 'success', message: 'Money item updated.' }); } catch { void refreshData(); pulseStatus({ type: 'error', message: 'Money item failed to update.' }); }
     },
-  }), [activity, contacts, events, hydrated, matters, milestones, money, saveStatus, selectedMatterId, tasks, thresholds, waitingOn]);
+  }), [activity, contacts, events, hydrated, matters, milestones, money, pulseStatus, refreshData, saveStatus, selectedMatterId, setThresholds, tasks, thresholds, waitingOn]);
 
   return <MissionControlContext.Provider value={value}>{children}</MissionControlContext.Provider>;
 }

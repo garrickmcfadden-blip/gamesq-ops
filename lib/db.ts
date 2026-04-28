@@ -6,16 +6,22 @@ function currency(value: number | null) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);
 }
 
+function numericCurrency(value?: string) {
+  if (!value) return null;
+  const numeric = Number(value.replace(/[$,]/g, ''));
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 export async function fetchMatters(): Promise<Matter[]> {
   const { data, error } = await supabase.from('matters').select('*').order('created_at', { ascending: false });
   if (error) throw error;
   const matterIds = data.map((row) => row.id);
-  const notesMap = new Map<string, string[]>();
+  const notesMap = new Map<string, Matter['notes']>();
   if (matterIds.length) {
-    const { data: notesData } = await supabase.from('matter_notes').select('matter_id, body').in('matter_id', matterIds).order('created_at', { ascending: false });
+    const { data: notesData } = await supabase.from('matter_notes').select('id, matter_id, body, created_at').in('matter_id', matterIds).order('created_at', { ascending: false });
     (notesData ?? []).forEach((note) => {
       const bucket = notesMap.get(note.matter_id) ?? [];
-      bucket.push(note.body);
+      bucket.push({ id: note.id, matterId: note.matter_id, body: note.body, createdAt: note.created_at ?? undefined });
       notesMap.set(note.matter_id, bucket);
     });
   }
@@ -92,11 +98,19 @@ export async function updateMatterRecord(matterId: string, updates: Partial<Matt
   if (updates.blocker !== undefined) payload.blocker = updates.blocker || null;
   if (updates.status !== undefined) payload.status = updates.status;
   if (updates.stage !== undefined) payload.stage = updates.stage;
+  if (updates.priority !== undefined) payload.priority = updates.priority;
+  if (updates.owner !== undefined) payload.owner = updates.owner;
   if (updates.lastActivity !== undefined) payload.last_activity = updates.lastActivity;
+  if (updates.incidentDate !== undefined) payload.incident_date = updates.incidentDate || null;
+  if (updates.statute !== undefined) payload.statute_date = updates.statute || null;
+  if (updates.value !== undefined) payload.projected_value = numericCurrency(updates.value);
   if (updates.sourceType !== undefined) payload.source_type = updates.sourceType || null;
   if (updates.sourceDetail !== undefined) payload.source_detail = updates.sourceDetail || null;
   if (updates.campaign !== undefined) payload.campaign = updates.campaign || null;
-  if (updates.archived !== undefined) payload.archived = updates.archived;
+  if (updates.archived !== undefined) {
+    payload.archived = updates.archived;
+    if (!updates.archived) payload.archived_at = null;
+  }
   if (updates.archivedAt !== undefined) payload.archived_at = updates.archivedAt || null;
   const { error } = await supabase.from('matters').update(payload).eq('id', matterId);
   if (error) throw error;
@@ -144,7 +158,7 @@ export async function createMatterRecord(input: {
       last_activity: 'Matter created in Mission Control',
       next_action: input.nextAction,
       blocker: input.blocker || null,
-      projected_value: input.projectedValue ? Number(input.projectedValue) : null,
+      projected_value: numericCurrency(input.projectedValue),
       incident_date: input.incidentDate || null,
       statute_date: input.statute || null,
       source_type: null,
@@ -192,18 +206,19 @@ export async function createMoneyItemRecord(input: { matterId: string; status: s
   const { error } = await supabase.from('money_items').insert({
     matter_id: input.matterId,
     status: input.status,
-    amount: input.amount ? Number(input.amount) : null,
+    amount: numericCurrency(input.amount),
     next_step: input.next || null,
   });
   if (error) throw error;
 }
 
 export async function createMatterNoteRecord(input: { matterId: string; body: string }) {
-  const { error } = await supabase.from('matter_notes').insert({
+  const { data, error } = await supabase.from('matter_notes').insert({
     matter_id: input.matterId,
     body: input.body,
-  });
+  }).select('id, matter_id, body, created_at').single();
   if (error) throw error;
+  return { id: data.id, matterId: data.matter_id, body: data.body, createdAt: data.created_at ?? undefined };
 }
 
 export async function createEventRecord(input: { matterId?: string; title: string; kind: string; startsAt?: string }) {
@@ -230,7 +245,14 @@ export async function upsertMatterMilestoneRecord(matterId: string, updates: Par
   if (updates.recordsReceivedAt !== undefined) payload.records_received_at = updates.recordsReceivedAt || null;
   if (updates.demandSentAt !== undefined) payload.demand_sent_at = updates.demandSentAt || null;
   if (updates.firstOfferAt !== undefined) payload.first_offer_at = updates.firstOfferAt || null;
+  if (updates.defendantAnswerReceivedAt !== undefined) payload.defendant_answer_received_at = updates.defendantAnswerReceivedAt || null;
+  if (updates.disclosureStatementSentAt !== undefined) payload.disclosure_statement_sent_at = updates.disclosureStatementSentAt || null;
+  if (updates.firstDiscoverySentAt !== undefined) payload.first_discovery_sent_at = updates.firstDiscoverySentAt || null;
   if (updates.settlementReachedAt !== undefined) payload.settlement_reached_at = updates.settlementReachedAt || null;
+  if (updates.settlementPaperworkReceivedAt !== undefined) payload.settlement_paperwork_received_at = updates.settlementPaperworkReceivedAt || null;
+  if (updates.settlementPaperworkSentAt !== undefined) payload.settlement_paperwork_sent_at = updates.settlementPaperworkSentAt || null;
+  if (updates.settlementCheckReceivedAt !== undefined) payload.settlement_check_received_at = updates.settlementCheckReceivedAt || null;
+  if (updates.clientCheckSentAt !== undefined) payload.client_check_sent_at = updates.clientCheckSentAt || null;
   const { error } = await supabase.from('matter_milestones').upsert(payload, { onConflict: 'matter_id' });
   if (error) throw error;
 }
@@ -252,7 +274,14 @@ export async function fetchMatterMilestones(): Promise<MatterMilestone[]> {
     recordsReceivedAt: row.records_received_at ?? undefined,
     demandSentAt: row.demand_sent_at ?? undefined,
     firstOfferAt: row.first_offer_at ?? undefined,
+    defendantAnswerReceivedAt: row.defendant_answer_received_at ?? undefined,
+    disclosureStatementSentAt: row.disclosure_statement_sent_at ?? undefined,
+    firstDiscoverySentAt: row.first_discovery_sent_at ?? undefined,
     settlementReachedAt: row.settlement_reached_at ?? undefined,
+    settlementPaperworkReceivedAt: row.settlement_paperwork_received_at ?? undefined,
+    settlementPaperworkSentAt: row.settlement_paperwork_sent_at ?? undefined,
+    settlementCheckReceivedAt: row.settlement_check_received_at ?? undefined,
+    clientCheckSentAt: row.client_check_sent_at ?? undefined,
   }));
 }
 
@@ -287,8 +316,8 @@ export async function deleteMoneyItemRecord(moneyItemId: string) {
   if (error) throw error;
 }
 
-export async function deleteMatterNoteRecord(matterId: string, body: string) {
-  const { error } = await supabase.from('matter_notes').delete().eq('matter_id', matterId).eq('body', body);
+export async function deleteMatterNoteRecord(noteId: string) {
+  const { error } = await supabase.from('matter_notes').delete().eq('id', noteId);
   if (error) throw error;
 }
 
@@ -303,6 +332,6 @@ export async function updateWaitingItemRecord(waitingItemId: string, input: { su
 }
 
 export async function updateMoneyItemRecord(moneyItemId: string, input: { status: string; amount?: string; next?: string }) {
-  const { error } = await supabase.from('money_items').update({ status: input.status, amount: input.amount ? Number(input.amount) : null, next_step: input.next || null }).eq('id', moneyItemId);
+  const { error } = await supabase.from('money_items').update({ status: input.status, amount: numericCurrency(input.amount), next_step: input.next || null }).eq('id', moneyItemId);
   if (error) throw error;
 }

@@ -1,41 +1,25 @@
-# GAMESQ Ops — Mission Control
+# GAMESQ Mission Control
 
-Deployable package for the GAMESQ Mission Control app.
+A local Next.js prototype for a Filevine-free litigation mission control dashboard.
 
-## Stack
-- Next.js
-- Supabase
-- Vercel
+## Run
 
-## Local run
 ```bash
 npm install
 npm run dev
 ```
 
-## Required environment variables
-Create `.env.local` for local development:
+Then open <http://localhost:3000>.
 
-```bash
-NEXT_PUBLIC_SUPABASE_URL=...
-NEXT_PUBLIC_SUPABASE_ANON_KEY=...
-```
+## Current scope
 
-In Vercel, add the same two environment variables in project settings.
+- operational cockpit layout
+- mock law-firm data
+- triage, today, pipeline, waiting-on, money radar, command feed
 
-## Deployment target
-- GitHub repo: `gamesq-ops`
-- Vercel project/domain: `mission.gamesqlaw.com`
+## Next
 
-## Supabase SQL files included
-See `supabase/` for:
-- schema
-- seed
-- milestones
-- owner-only RLS
-- settings
-- source tracking
-
-## Important
-Do not commit `.env.local`.
-Use `supabase/owner-rls.sql` as the final security layer after any broader policy SQL is applied.
+- add matter detail drawer
+- add editable data layer
+- connect Supabase
+- sync calendar and communications

@@ -10,7 +10,14 @@ export interface MatterMilestone {
   recordsReceivedAt?: string;
   demandSentAt?: string;
   firstOfferAt?: string;
+  defendantAnswerReceivedAt?: string;
+  disclosureStatementSentAt?: string;
+  firstDiscoverySentAt?: string;
   settlementReachedAt?: string;
+  settlementPaperworkReceivedAt?: string;
+  settlementPaperworkSentAt?: string;
+  settlementCheckReceivedAt?: string;
+  clientCheckSentAt?: string;
 }
 
 export interface KPIStat {
@@ -88,6 +95,26 @@ export function buildKpis(matters: Matter[], tasks: Task[], milestones: MatterMi
     const m = milestoneMap.get(matter.id);
     return daysBetween(m?.demandSentAt, m?.settlementReachedAt);
   }));
+  const answerToDisclosure = avg(matters.map((matter) => {
+    const m = milestoneMap.get(matter.id);
+    return daysBetween(m?.defendantAnswerReceivedAt, m?.disclosureStatementSentAt);
+  }));
+  const answerToFirstDiscovery = avg(matters.map((matter) => {
+    const m = milestoneMap.get(matter.id);
+    return daysBetween(m?.defendantAnswerReceivedAt, m?.firstDiscoverySentAt);
+  }));
+  const settlementPaperworkTurnaround = avg(matters.map((matter) => {
+    const m = milestoneMap.get(matter.id);
+    return daysBetween(m?.settlementPaperworkReceivedAt, m?.settlementPaperworkSentAt);
+  }));
+  const settlementCheckTurnaround = avg(matters.map((matter) => {
+    const m = milestoneMap.get(matter.id);
+    return daysBetween(m?.settlementCheckReceivedAt, m?.clientCheckSentAt);
+  }));
+  const settlementToClientCheck = avg(matters.map((matter) => {
+    const m = milestoneMap.get(matter.id);
+    return daysBetween(m?.settlementReachedAt, m?.clientCheckSentAt);
+  }));
   const staleMatters = matters.filter((matter) => {
     const activity = matter.lastActivity.toLowerCase();
     return !activity.includes('today') && !activity.includes('yesterday');
@@ -107,6 +134,11 @@ export function buildKpis(matters: Matter[], tasks: Task[], milestones: MatterMi
     { label: 'Records → Demand', value: recordsToDemand !== null ? `${recordsToDemand}d` : '—', detail: 'Average days from first records order to demand sent' },
     { label: 'Demand → Offer', value: demandToOffer !== null ? `${demandToOffer}d` : '—', detail: 'Average days from demand sent to first offer' },
     { label: 'Demand → Settlement', value: demandToSettlement !== null ? `${demandToSettlement}d` : '—', detail: 'Average days from demand sent to settlement' },
+    { label: 'Answer → Disclosure', value: answerToDisclosure !== null ? `${answerToDisclosure}d` : '—', detail: 'Average days from Defendant Answer to Disclosure Statement sent' },
+    { label: 'Answer → Discovery', value: answerToFirstDiscovery !== null ? `${answerToFirstDiscovery}d` : '—', detail: 'Average days from Defendant Answer to first discovery sent' },
+    { label: 'Settle Docs Turnaround', value: settlementPaperworkTurnaround !== null ? `${settlementPaperworkTurnaround}d` : '—', detail: 'Average days from settlement paperwork received to sent back' },
+    { label: 'Check → Client Check', value: settlementCheckTurnaround !== null ? `${settlementCheckTurnaround}d` : '—', detail: 'Average days from settlement check received to client check sent' },
+    { label: 'Settlement → Client Check', value: settlementToClientCheck !== null ? `${settlementToClientCheck}d` : '—', detail: 'Average days from settlement reached to client check sent' },
     { label: 'Stale Matters', value: `${staleMatters}`, detail: 'Matters without today/yesterday activity markers' },
     { label: 'Overdue Tasks', value: `${overdueTasks}`, detail: 'Tasks explicitly marked overdue' },
     { label: 'Statute Risk', value: `${statuteRisk}`, detail: 'Matters with statute inside 90 days' },
@@ -193,6 +225,11 @@ export function matterTiming(matter: Matter, milestone?: MatterMilestone) {
     { label: 'Records Ordered → Demand', value: daysBetween(milestone?.recordsFirstOrderedAt, milestone?.demandSentAt) },
     { label: 'Demand → First Offer', value: daysBetween(milestone?.demandSentAt, milestone?.firstOfferAt) },
     { label: 'Demand → Settlement', value: daysBetween(milestone?.demandSentAt, milestone?.settlementReachedAt) },
+    { label: 'Answer → Disclosure', value: daysBetween(milestone?.defendantAnswerReceivedAt, milestone?.disclosureStatementSentAt) },
+    { label: 'Answer → Discovery', value: daysBetween(milestone?.defendantAnswerReceivedAt, milestone?.firstDiscoverySentAt) },
+    { label: 'Settlement Docs → Returned', value: daysBetween(milestone?.settlementPaperworkReceivedAt, milestone?.settlementPaperworkSentAt) },
+    { label: 'Check Received → Client Check', value: daysBetween(milestone?.settlementCheckReceivedAt, milestone?.clientCheckSentAt) },
+    { label: 'Settlement → Client Check', value: daysBetween(milestone?.settlementReachedAt, milestone?.clientCheckSentAt) },
     { label: 'Days Since Last Activity', value: null },
   ].map((item) => ({ ...item, display: item.value === null ? '—' : `${item.value}d` }));
 }

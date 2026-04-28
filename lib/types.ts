@@ -24,7 +24,14 @@ export interface Matter {
   archived?: boolean;
   archivedAt?: string;
   createdAt?: string;
-  notes: string[];
+  notes: MatterNote[];
+}
+
+export interface MatterNote {
+  id: string;
+  matterId: string;
+  body: string;
+  createdAt?: string;
 }
 
 export interface Contact {
@@ -94,7 +101,14 @@ export interface MatterMilestone {
   recordsReceivedAt?: string;
   demandSentAt?: string;
   firstOfferAt?: string;
+  defendantAnswerReceivedAt?: string;
+  disclosureStatementSentAt?: string;
+  firstDiscoverySentAt?: string;
   settlementReachedAt?: string;
+  settlementPaperworkReceivedAt?: string;
+  settlementPaperworkSentAt?: string;
+  settlementCheckReceivedAt?: string;
+  clientCheckSentAt?: string;
 }
 
 export interface MissionControlSeed {

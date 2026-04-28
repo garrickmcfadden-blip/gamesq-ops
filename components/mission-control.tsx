@@ -63,6 +63,16 @@ function isSameDay(a: Date, b: Date) {
 function taskUrgencyWeight(due: string) {
   if (/overdue/i.test(due)) return 100;
   if (/today/i.test(due)) return 90;
+  const parsed = parseDateLike(due);
+  if (parsed) {
+    const now = new Date();
+    const diff = Math.ceil((parsed.getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / 86400000);
+    if (diff < 0) return 100;
+    if (diff === 0) return 90;
+    if (diff <= 3) return 80;
+    if (diff <= 7) return 60;
+    return 20;
+  }
   const match = due.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
   if (!match) return 10;
   const [, mm, dd, yyyy] = match;
@@ -74,6 +84,24 @@ function taskUrgencyWeight(due: string) {
   if (diff <= 3) return 80;
   if (diff <= 7) return 60;
   return 20;
+}
+
+function formatTaskDue(value: string) {
+  if (!value || value === 'No due date') return value || 'No due date';
+  const parsed = parseDateLike(value);
+  if (!parsed) return value;
+  return parsed.toLocaleString([], { month: 'numeric', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function dateTimeFormParts(value?: string) {
+  const parsed = parseDateLike(value);
+  if (!parsed) return { date: new Date().toISOString().slice(0, 10), time: '' };
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, '0');
+  const day = String(parsed.getDate()).padStart(2, '0');
+  const hour = String(parsed.getHours()).padStart(2, '0');
+  const minute = String(parsed.getMinutes()).padStart(2, '0');
+  return { date: `${year}-${month}-${day}`, time: `${hour}:${minute}` };
 }
 
 function parseDateLike(value?: string) {
@@ -114,6 +142,11 @@ function isImminentStep(next?: string) {
   return /(today|tomorrow|this week|immediate|imminent|asap|urgent|call|follow up|follow-up|review|finalize|sign|send)/i.test(next);
 }
 
+function editEventFormValue(item: { title: string; type: string; startsAt?: string }) {
+  const { date, time } = dateTimeFormParts(item.startsAt);
+  return { title: item.title, kind: item.type, date, time };
+}
+
 export function MissionControl() {
   const { matters, contacts, tasks, waitingOn, events, money, activity, milestones, thresholds, setThresholds, selectedMatterId, setSelectedMatterId, updateMatter, updateMatterMilestone, updateTaskStatus, createTask, createMatter, createContact, createWaitingItem, createActivity, createMoneyItem, createMatterNote, createEvent, deleteTask, deleteEvent, deleteWaitingItem, deleteMoneyItem, deleteMatterNote, updateEvent, updateWaitingItem, updateMoneyItem, saveStatus } = useMissionControl();
   const [activeView, setActiveView] = useState<'mission' | 'directory'>('mission');
@@ -137,6 +170,7 @@ export function MissionControl() {
   const [editingWaitingId, setEditingWaitingId] = useState<string | null>(null);
   const [editingMoneyId, setEditingMoneyId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<{ title: string; message: string; action: () => void } | null>(null);
 
   const filteredMatters = useMemo(() => matters.filter((matter) => {
     const haystack = `${matter.title} ${matter.client} ${matter.sourceType ?? ''} ${matter.owner}`.toLowerCase();
@@ -254,16 +288,9 @@ export function MissionControl() {
     }
   }
 
-  function formatDisplayDate(value: string) {
-    if (!value) return '';
-    const [year, month, day] = value.split('-');
-    if (!year || !month || !day) return value;
-    return `${Number(month)}/${Number(day)}/${year}`;
-  }
-
   function submitTask() {
     if (!selectedMatter || !newTaskTitle.trim()) return;
-    const due = newTaskTime ? `${formatDisplayDate(newTaskDue)} ${newTaskTime}` : formatDisplayDate(newTaskDue);
+    const due = newTaskTime ? `${newTaskDue}T${newTaskTime}:00` : `${newTaskDue}T09:00:00`;
     createTask({ matterId: selectedMatter.id, title: newTaskTitle.trim(), owner: newTaskOwner, due, priority: 'medium', status: 'open' });
     setNewTaskTitle('');
     setNewTaskTime('');
@@ -288,8 +315,31 @@ export function MissionControl() {
     setEventForm({ title: '', kind: 'Event', date: new Date().toISOString().slice(0, 10), time: '' });
   }
 
+  function askConfirm(title: string, message: string, action: () => void) {
+    setConfirmAction({ title, message, action });
+  }
+
+  function runConfirmedAction() {
+    const pending = confirmAction;
+    setConfirmAction(null);
+    pending?.action();
+  }
+
   return (
     <main className="min-h-screen px-6 py-6 lg:px-8">
+      {confirmAction ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl border border-white/10 bg-gam-night p-6 shadow-glow">
+            <p className="text-sm uppercase tracking-[0.28em] text-gam-peach">Confirm Action</p>
+            <h2 className="mt-2 text-xl font-semibold text-white">{confirmAction.title}</h2>
+            <p className="mt-3 text-sm text-white/65">{confirmAction.message}</p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button onClick={() => setConfirmAction(null)} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/70">Cancel</button>
+              <button onClick={runConfirmedAction} className="rounded-xl border border-red-500/30 bg-red-500/15 px-4 py-2 text-sm font-semibold text-red-100">Delete</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <div className="mx-auto flex max-w-[1680px] flex-col gap-6">
         <header className="rounded-3xl border border-white/10 bg-gam-blue/60 p-6 shadow-glow backdrop-blur">
           <div className="mb-4 flex flex-wrap gap-3">
@@ -420,7 +470,7 @@ export function MissionControl() {
                     <button key={task.id} onClick={() => selectMatter(task.matterId)} className={`w-full rounded-2xl border p-4 text-left transition hover:scale-[1.01] hover:border-white/20 ${severityClasses(task.priority)} ${selectedMatterId === task.matterId ? 'ring-1 ring-gam-peach/70' : ''}`}>
                       <div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold">{task.title}</p><span className="rounded-full border border-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.2em] text-white/70">{task.priority}</span></div>
                       <p className="mt-2 text-sm text-white/75">{matter?.title}</p>
-                      <div className="mt-3 flex items-center justify-between text-xs text-white/60"><span>Owner: {task.owner}</span><span>{task.due}</span></div>
+                      <div className="mt-3 flex items-center justify-between text-xs text-white/60"><span>Owner: {task.owner}</span><span>{formatTaskDue(task.due)}</span></div>
                     </button>
                   );
                 })}
@@ -431,11 +481,11 @@ export function MissionControl() {
               <div className="space-y-4">
                 <div>
                   <div className="mb-2 text-xs uppercase tracking-[0.18em] text-white/45">Today</div>
-                  <div className="space-y-3">{eventBuckets.today.length ? eventBuckets.today.map((item) => <div key={item.id} className="flex items-center gap-2"><button onClick={() => selectMatter(item.matterId)} className="flex flex-1 items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left transition hover:border-white/20 hover:bg-white/[0.05]"><div className="min-w-32 text-sm font-semibold text-gam-peach">{item.time}</div><div className="flex-1"><p className="text-sm text-white">{item.title}</p><p className="mt-1 text-xs uppercase tracking-[0.22em] text-white/45">{item.type}</p></div></button><button onClick={() => { setEditingEventId(item.id); const iso = item.startsAt?.slice(0, 16) ?? ''; const [date, time] = iso ? iso.split('T') : ['', '']; setEventForm({ title: item.title, kind: item.type, date: date || new Date().toISOString().slice(0, 10), time: time || '' }); }} className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-sky-200">Edit</button><button onClick={() => { if (confirm('Delete this event?')) void deleteEvent(item.id); }} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-red-200">Delete</button></div>) : <div className="text-sm text-white/50">No events today.</div>}</div>
+                  <div className="space-y-3">{eventBuckets.today.length ? eventBuckets.today.map((item) => <div key={item.id} className="flex items-center gap-2"><button onClick={() => selectMatter(item.matterId)} className="flex flex-1 items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left transition hover:border-white/20 hover:bg-white/[0.05]"><div className="min-w-32 text-sm font-semibold text-gam-peach">{item.time}</div><div className="flex-1"><p className="text-sm text-white">{item.title}</p><p className="mt-1 text-xs uppercase tracking-[0.22em] text-white/45">{item.type}</p></div></button><button onClick={() => { setEditingEventId(item.id); setEventForm(editEventFormValue(item)); }} className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-sky-200">Edit</button><button onClick={() => { askConfirm('Delete event?', 'This event will be removed from Mission Control.', () => void deleteEvent(item.id)); }} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-red-200">Delete</button></div>) : <div className="text-sm text-white/50">No events today.</div>}</div>
                 </div>
                 <div>
                   <div className="mb-2 text-xs uppercase tracking-[0.18em] text-white/45">Upcoming</div>
-                  <div className="space-y-3">{eventBuckets.upcoming.length ? eventBuckets.upcoming.slice(0, 8).map((item) => <div key={item.id} className="flex items-center gap-2"><button onClick={() => selectMatter(item.matterId)} className="flex flex-1 items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left transition hover:border-white/20 hover:bg-white/[0.05]"><div className="min-w-32 text-sm font-semibold text-gam-peach">{item.time}</div><div className="flex-1"><p className="text-sm text-white">{item.title}</p><p className="mt-1 text-xs uppercase tracking-[0.22em] text-white/45">{item.type}</p></div></button><button onClick={() => { setEditingEventId(item.id); const iso = item.startsAt?.slice(0, 16) ?? ''; const [date, time] = iso ? iso.split('T') : ['', '']; setEventForm({ title: item.title, kind: item.type, date: date || new Date().toISOString().slice(0, 10), time: time || '' }); }} className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-sky-200">Edit</button><button onClick={() => { if (confirm('Delete this event?')) void deleteEvent(item.id); }} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-red-200">Delete</button></div>) : <div className="text-sm text-white/50">No upcoming events.</div>}</div>
+                  <div className="space-y-3">{eventBuckets.upcoming.length ? eventBuckets.upcoming.slice(0, 8).map((item) => <div key={item.id} className="flex items-center gap-2"><button onClick={() => selectMatter(item.matterId)} className="flex flex-1 items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left transition hover:border-white/20 hover:bg-white/[0.05]"><div className="min-w-32 text-sm font-semibold text-gam-peach">{item.time}</div><div className="flex-1"><p className="text-sm text-white">{item.title}</p><p className="mt-1 text-xs uppercase tracking-[0.22em] text-white/45">{item.type}</p></div></button><button onClick={() => { setEditingEventId(item.id); setEventForm(editEventFormValue(item)); }} className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-sky-200">Edit</button><button onClick={() => { askConfirm('Delete event?', 'This event will be removed from Mission Control.', () => void deleteEvent(item.id)); }} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-red-200">Delete</button></div>) : <div className="text-sm text-white/50">No upcoming events.</div>}</div>
                 </div>
                 {eventBuckets.undated.length ? <div><div className="mb-2 text-xs uppercase tracking-[0.18em] text-white/45">Undated</div><div className="space-y-3">{eventBuckets.undated.map((item) => <button key={item.id} onClick={() => selectMatter(item.matterId)} className="flex w-full items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left transition hover:border-white/20 hover:bg-white/[0.05]"><div className="min-w-32 text-sm font-semibold text-gam-peach">{item.time || 'No date'}</div><div className="flex-1"><p className="text-sm text-white">{item.title}</p><p className="mt-1 text-xs uppercase tracking-[0.22em] text-white/45">{item.type}</p></div></button>)}</div></div> : null}
               </div>
@@ -487,17 +537,17 @@ export function MissionControl() {
 
                 <div className="grid gap-5 2xl:grid-cols-[1.05fr,0.95fr]">
                   <div className="space-y-5">
-                    <div><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Open Tasks</h4><div className="mt-3 space-y-3">{selectedTasks.length ? selectedTasks.map((task) => <div key={task.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-semibold text-white">{task.title}</p><p className="mt-1 text-xs uppercase tracking-[0.18em] text-white/45">{task.owner} • {task.due}</p></div><div className="flex gap-2">{task.status !== 'done' ? <button onClick={() => updateTaskStatus(task.id, 'done')} className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-emerald-300">Done</button> : null}{task.status === 'open' ? <button onClick={() => updateTaskStatus(task.id, 'in_progress')} className="rounded-full border border-sky-400/30 bg-sky-400/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-sky-200">Start</button> : null}<button onClick={() => { if (confirm('Delete this task?')) void deleteTask(task.id); }} className="rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-red-200">Delete</button></div></div></div>) : <p className="text-sm text-white/55">No tasks attached to this matter yet.</p>}</div></div>
+                    <div><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Open Tasks</h4><div className="mt-3 space-y-3">{selectedTasks.length ? selectedTasks.map((task) => <div key={task.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-semibold text-white">{task.title}</p><p className="mt-1 text-xs uppercase tracking-[0.18em] text-white/45">{task.owner} • {formatTaskDue(task.due)}</p></div><div className="flex gap-2">{task.status !== 'done' ? <button onClick={() => updateTaskStatus(task.id, 'done')} className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-emerald-300">Done</button> : null}{task.status === 'open' ? <button onClick={() => updateTaskStatus(task.id, 'in_progress')} className="rounded-full border border-sky-400/30 bg-sky-400/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-sky-200">Start</button> : null}<button onClick={() => { askConfirm('Delete task?', 'This task will be removed from the selected matter.', () => void deleteTask(task.id)); }} className="rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-xs uppercase tracking-[0.18em] text-red-200">Delete</button></div></div></div>) : <p className="text-sm text-white/55">No tasks attached to this matter yet.</p>}</div></div>
                     <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Quick Add Task</h4><div className="mt-3 grid gap-3 md:grid-cols-[1.2fr,0.8fr,0.9fr,0.8fr,auto]"><input value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} placeholder="Task title" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30" /><input value={newTaskOwner} onChange={(e) => setNewTaskOwner(e.target.value)} placeholder="Owner" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30" /><input type="date" value={newTaskDue} onChange={(e) => setNewTaskDue(e.target.value)} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><input type="time" value={newTaskTime} onChange={(e) => setNewTaskTime(e.target.value)} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><button onClick={submitTask} className="rounded-xl bg-gam-orange px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110">Add</button></div></div>
                     <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Add Contact</h4><div className="mt-3 grid gap-3 md:grid-cols-2"><input value={contactForm.name} onChange={(e) => setContactForm({ ...contactForm, name: e.target.value })} placeholder="Name" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><select value={contactForm.role} onChange={(e) => setContactForm({ ...contactForm, role: e.target.value as Contact['role'] })} className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"><option value="client">client</option><option value="adjuster">adjuster</option><option value="provider">provider</option><option value="defense_counsel">defense counsel</option><option value="court">court</option><option value="witness">witness</option><option value="other">other</option></select><input value={contactForm.phone} onChange={(e) => setContactForm({ ...contactForm, phone: e.target.value })} placeholder="Phone" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><input value={contactForm.email} onChange={(e) => setContactForm({ ...contactForm, email: e.target.value })} placeholder="Email" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /></div><button onClick={() => { if (selectedMatter && contactForm.name.trim()) { createContact({ matterId: selectedMatter.id, ...contactForm }); setContactForm({ name: '', role: 'client', phone: '', email: '' }); }}} className="mt-3 rounded-xl bg-gam-orange px-4 py-2 text-sm font-semibold text-white">Add Contact</button></div>
                   </div>
 
                   <div className="space-y-5">
-                    <div><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Waiting On</h4><div className="mt-3 space-y-3">{selectedWaiting.length ? selectedWaiting.map((item) => <div key={item.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-white">{item.subject}</p><p className="mt-1 text-sm text-white/65">Waiting on {item.waitingOn}</p><p className="mt-3 text-xs uppercase tracking-[0.18em] text-white/45">Age {item.age} • Next {item.next}</p></div><div className="flex gap-2"><button onClick={() => { setEditingWaitingId(item.id); setWaitingForm({ subject: item.subject, waitingOn: item.waitingOn, age: item.age, next: item.next }); }} className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-sky-200">Edit</button><button onClick={() => { if (confirm('Delete this waiting item?')) void deleteWaitingItem(item.id); }} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-red-200">Delete</button></div></div></div>) : <p className="text-sm text-white/55">Nothing outstanding.</p>}</div></div>
+                    <div><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Waiting On</h4><div className="mt-3 space-y-3">{selectedWaiting.length ? selectedWaiting.map((item) => <div key={item.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold text-white">{item.subject}</p><p className="mt-1 text-sm text-white/65">Waiting on {item.waitingOn}</p><p className="mt-3 text-xs uppercase tracking-[0.18em] text-white/45">Age {item.age} • Next {item.next}</p></div><div className="flex gap-2"><button onClick={() => { setEditingWaitingId(item.id); setWaitingForm({ subject: item.subject, waitingOn: item.waitingOn, age: item.age, next: item.next }); }} className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-sky-200">Edit</button><button onClick={() => { askConfirm('Delete waiting item?', 'This waiting item will be removed from the selected matter.', () => void deleteWaitingItem(item.id)); }} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-red-200">Delete</button></div></div></div>) : <p className="text-sm text-white/55">Nothing outstanding.</p>}</div></div>
                     <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">{editingWaitingId ? 'Edit Waiting Item' : 'Add Waiting Item'}</h4><div className="mt-3 grid gap-3 md:grid-cols-2"><input value={waitingForm.subject} onChange={(e) => setWaitingForm({ ...waitingForm, subject: e.target.value })} placeholder="Subject" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><input value={waitingForm.waitingOn} onChange={(e) => setWaitingForm({ ...waitingForm, waitingOn: e.target.value })} placeholder="Waiting on" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><input value={waitingForm.age} onChange={(e) => setWaitingForm({ ...waitingForm, age: e.target.value })} placeholder="Age label" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><input value={waitingForm.next} onChange={(e) => setWaitingForm({ ...waitingForm, next: e.target.value })} placeholder="Next step" className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /></div><div className="mt-3 flex gap-2"><button onClick={() => { if (selectedMatter && waitingForm.subject.trim()) { if (editingWaitingId) { updateWaitingItem(editingWaitingId, waitingForm); setEditingWaitingId(null); } else { createWaitingItem({ matterId: selectedMatter.id, ...waitingForm }); } setWaitingForm({ subject: '', waitingOn: '', age: '', next: '' }); }}} className="rounded-xl bg-gam-orange px-4 py-2 text-sm font-semibold text-white">{editingWaitingId ? 'Save Waiting Item' : 'Add Waiting Item'}</button>{editingWaitingId ? <button onClick={() => { setEditingWaitingId(null); setWaitingForm({ subject: '', waitingOn: '', age: '', next: '' }); }} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/70">Cancel</button> : null}</div></div>
                     <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Add Matter Note</h4><textarea value={noteBody} onChange={(e) => setNoteBody(e.target.value)} placeholder="Matter note" className="mt-3 min-h-24 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" /><button onClick={() => { if (selectedMatter && noteBody.trim()) { createMatterNote({ matterId: selectedMatter.id, body: noteBody.trim() }); setNoteBody(''); }}} className="mt-3 rounded-xl bg-gam-orange px-4 py-2 text-sm font-semibold text-white">Add Note</button></div>
                     <div><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Contacts</h4><div className="mt-3 space-y-3">{selectedContacts.map((contact) => <div key={contact.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"><p className="text-sm font-semibold text-white">{contact.name}</p><p className="mt-1 text-xs uppercase tracking-[0.18em] text-white/45">{contact.role.replace('_', ' ')}</p>{(contact.phone || contact.email) ? <p className="mt-2 text-sm text-white/65">{contact.phone ?? contact.email}</p> : null}</div>)}</div></div>
-                    <div><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Matter Notes</h4><div className="mt-3 space-y-3">{selectedMatter.notes.map((note) => <div key={note} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/80"><div className="flex items-start justify-between gap-3"><div>{note}</div><button onClick={() => { if (confirm('Delete this note?')) void deleteMatterNote(selectedMatter.id, note); }} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-red-200">Delete</button></div></div>)}</div></div>
+                    <div><h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Matter Notes</h4><div className="mt-3 space-y-3">{selectedMatter.notes.map((note) => <div key={note.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/80"><div className="flex items-start justify-between gap-3"><div>{note.body}</div><button onClick={() => { askConfirm('Delete note?', 'This note will be permanently removed from the selected matter.', () => void deleteMatterNote(note.id)); }} className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-red-200">Delete</button></div></div>)}</div></div>
                   </div>
                 </div>
                 <div className="grid gap-3 md:grid-cols-3 text-xs uppercase tracking-[0.18em] text-white/45">
@@ -514,7 +564,8 @@ export function MissionControl() {
                   ))}
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                  <h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Milestones</h4>
+                  <h4 className="text-xs uppercase tracking-[0.22em] text-white/45">Matter Milestones</h4>
+                  <h5 className="mt-4 text-xs uppercase tracking-[0.2em] text-gam-sky/70">Intake / Demand</h5>
                   <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                     <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Lead Created</div><input type="date" value={selectedMilestone?.leadCreatedAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { leadCreatedAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
                     <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Letter of Rep Sent</div><input type="date" value={selectedMilestone?.letterOfRepSentAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { letterOfRepSentAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
@@ -528,7 +579,20 @@ export function MissionControl() {
                     <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Records Received</div><input type="date" value={selectedMilestone?.recordsReceivedAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { recordsReceivedAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
                     <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Demand Sent</div><input type="date" value={selectedMilestone?.demandSentAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { demandSentAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
                     <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">First Offer</div><input type="date" value={selectedMilestone?.firstOfferAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { firstOfferAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                  </div>
+                  <h5 className="mt-5 text-xs uppercase tracking-[0.2em] text-gam-sky/70">Litigation</h5>
+                  <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Defendant Answer Received</div><input type="date" value={selectedMilestone?.defendantAnswerReceivedAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { defendantAnswerReceivedAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Disclosure Statement Sent</div><input type="date" value={selectedMilestone?.disclosureStatementSentAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { disclosureStatementSentAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">First Discovery Sent</div><input type="date" value={selectedMilestone?.firstDiscoverySentAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { firstDiscoverySentAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                  </div>
+                  <h5 className="mt-5 text-xs uppercase tracking-[0.2em] text-gam-sky/70">Settlement / Disbursement</h5>
+                  <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                     <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Settlement Reached</div><input type="date" value={selectedMilestone?.settlementReachedAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { settlementReachedAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Settlement Paperwork Received</div><input type="date" value={selectedMilestone?.settlementPaperworkReceivedAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { settlementPaperworkReceivedAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Settlement Paperwork Sent Back</div><input type="date" value={selectedMilestone?.settlementPaperworkSentAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { settlementPaperworkSentAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Settlement Check Received</div><input type="date" value={selectedMilestone?.settlementCheckReceivedAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { settlementCheckReceivedAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
+                    <label className="rounded-xl bg-black/20 p-3"><div className="text-xs uppercase tracking-[0.18em] text-white/45">Client Check Sent</div><input type="date" value={selectedMilestone?.clientCheckSentAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { clientCheckSentAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-white outline-none" /></label>
                   </div>
                 </div>
               </div> : null}
@@ -585,7 +649,7 @@ export function MissionControl() {
                       </button>
                       <button
                         onClick={() => {
-                          if (confirm('Delete this money item?')) void deleteMoneyItem(row.id);
+                          askConfirm('Delete money item?', 'This money item will be removed from Money Radar.', () => void deleteMoneyItem(row.id));
                         }}
                         className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-red-200"
                       >
@@ -690,8 +754,18 @@ export function MissionControl() {
                     <div className="mt-1 text-xs text-white/55">Demand to settlement cycle time.</div>
                   </div>
                   <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <div className="text-xs uppercase tracking-[0.18em] text-white/45">Disclosure Velocity</div>
+                    <div className="mt-2 text-lg font-semibold text-white">{kpis[6]?.value ?? '—'} / {kpis[7]?.value ?? '—'}</div>
+                    <div className="mt-1 text-xs text-white/55">Answer to Disclosure Statement and Answer to first discovery sent.</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
+                    <div className="text-xs uppercase tracking-[0.18em] text-white/45">Settlement Disbursement</div>
+                    <div className="mt-2 text-lg font-semibold text-white">{kpis[8]?.value ?? '—'} / {kpis[9]?.value ?? '—'} / {kpis[10]?.value ?? '—'}</div>
+                    <div className="mt-1 text-xs text-white/55">Docs received to returned, check received to client check, and settlement to client check.</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3">
                     <div className="text-xs uppercase tracking-[0.18em] text-white/45">Risk & Drift</div>
-                    <div className="mt-2 text-lg font-semibold text-white">{kpis[6]?.value ?? '—'} stale / {kpis[8]?.value ?? '—'} risk</div>
+                    <div className="mt-2 text-lg font-semibold text-white">{kpis[11]?.value ?? '—'} stale / {kpis[13]?.value ?? '—'} risk</div>
                     <div className="mt-1 text-xs text-white/55">Stale matters and statute risk.</div>
                   </div>
                 </div>
@@ -744,4 +818,3 @@ export function MissionControl() {
     </main>
   );
 }
-
