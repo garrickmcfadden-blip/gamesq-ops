@@ -26,19 +26,19 @@ const stageOrder: Stage[] = ['Intake', 'Treatment', 'Demand', 'Litigation', 'Res
 type DirectorySort = 'priority' | 'statute' | 'client' | 'value';
 
 function severityClasses(severity: string) {
-  if (severity === 'critical') return 'border-red-500/60 bg-red-500/10 text-red-100';
-  if (severity === 'high') return 'border-orange-500/60 bg-orange-500/10 text-orange-100';
-  if (severity === 'medium') return 'border-sky-400/30 bg-sky-400/10 text-sky-100';
-  return 'border-white/15 bg-white/[0.03] text-white';
+  if (severity === 'critical') return 'border-gam-orange/70 bg-gam-orange/15 text-gam-peach';
+  if (severity === 'high') return 'border-gam-peach/60 bg-gam-peach/10 text-gam-peach';
+  if (severity === 'medium') return 'border-gam-sky/30 bg-gam-sky/10 text-gam-sky';
+  return 'border-gam-sky/15 bg-gam-blue/35 text-gam-gray';
 }
 
 function Card({ title, subtitle, children, className = '' }: { title: string; subtitle?: string; children: React.ReactNode; className?: string }) {
   return (
-    <section className={`rounded-2xl border border-white/10 bg-white/5 p-5 shadow-glow backdrop-blur ${className}`}>
+    <section className={`rounded-2xl border border-gam-sky/10 bg-gam-blue/45 p-5 shadow-glow backdrop-blur ${className}`}>
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold uppercase tracking-[0.24em] text-gam-sky/80">{title}</h2>
-          {subtitle ? <p className="mt-1 text-sm text-white/55">{subtitle}</p> : null}
+          <h2 className="text-sm font-semibold uppercase tracking-[0.24em] text-gam-peach">{title}</h2>
+          {subtitle ? <p className="mt-1 text-sm text-gam-sky/65">{subtitle}</p> : null}
         </div>
       </div>
       {children}
@@ -341,7 +341,7 @@ export function MissionControl() {
         </div>
       ) : null}
       <div className="mx-auto flex max-w-[1680px] flex-col gap-6">
-        <header className="rounded-3xl border border-white/10 bg-gam-blue/60 p-6 shadow-glow backdrop-blur">
+        <header className="rounded-3xl border border-gam-peach/20 bg-gam-blue/80 p-6 shadow-glow backdrop-blur">
           <div className="mb-4 flex flex-wrap gap-3">
             <button onClick={() => setActiveView('mission')} className={`rounded-2xl px-4 py-2 text-sm font-semibold ${activeView === 'mission' ? 'bg-gam-orange text-white' : 'border border-white/10 bg-white/5 text-white/70'}`}>Mission Control</button>
             <button onClick={() => setActiveView('directory')} className={`rounded-2xl px-4 py-2 text-sm font-semibold ${activeView === 'directory' ? 'bg-gam-orange text-white' : 'border border-white/10 bg-white/5 text-white/70'}`}>All Matters</button>
@@ -349,16 +349,16 @@ export function MissionControl() {
           <div className="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
             <div>
               <p className="text-sm uppercase tracking-[0.32em] text-gam-peach">GAMESQ, PLC</p>
-              <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white md:text-4xl">Mission Control</h1>
-              <p className="mt-3 max-w-3xl text-sm text-white/70 md:text-base">Configurable KPI warnings, grouped drilldowns, and matter filtering/search so Mission Control stays useful as the caseload grows.</p>
+              <h1 className="mt-2 text-3xl font-bold tracking-tight text-gam-gray md:text-4xl">Mission Control</h1>
+              <p className="mt-3 max-w-3xl text-sm text-gam-sky/75 md:text-base">Configurable KPI warnings, grouped drilldowns, and matter filtering/search so Mission Control stays useful as the caseload grows.</p>
             </div>
             <div className="flex items-center gap-3">
               <button onClick={() => setShowNewMatter((v) => !v)} className="rounded-2xl bg-gam-orange px-4 py-3 text-sm font-semibold text-white transition hover:brightness-110">{showNewMatter ? 'Close New Matter' : 'New Matter'}</button>
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                 {summaryStats.map((stat) => (
-                  <div key={stat.label} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-                    <div className="text-xs uppercase tracking-[0.22em] text-white/50">{stat.label}</div>
-                    <div className="mt-2 text-2xl font-semibold text-white">{stat.value}</div>
+                  <div key={stat.label} className="rounded-2xl border border-gam-sky/10 bg-gam-night/35 px-4 py-3">
+                    <div className="text-xs uppercase tracking-[0.22em] text-gam-sky/55">{stat.label}</div>
+                    <div className="mt-2 text-2xl font-semibold text-gam-gray">{stat.value}</div>
                     <div className="mt-1 text-xs text-gam-sky/80">{stat.delta}</div>
                   </div>
                 ))}
@@ -405,10 +405,10 @@ export function MissionControl() {
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
           {kpis.map((kpi) => (
-            <div key={kpi.label} className="rounded-2xl border border-gam-peach/15 bg-gam-orange/5 p-4 shadow-glow">
-              <div className="text-xs uppercase tracking-[0.18em] text-white/45">{kpi.label}</div>
-              <div className="mt-2 text-2xl font-semibold text-white">{kpi.value}</div>
-              <div className="mt-2 text-xs text-white/55">{kpi.detail}</div>
+            <div key={kpi.label} className="rounded-2xl border border-gam-peach/20 bg-gradient-to-br from-gam-orange/10 to-gam-blue/35 p-4 shadow-glow">
+              <div className="text-xs uppercase tracking-[0.18em] text-gam-peach/80">{kpi.label}</div>
+              <div className="mt-2 text-2xl font-semibold text-gam-gray">{kpi.value}</div>
+              <div className="mt-2 text-xs text-gam-sky/60">{kpi.detail}</div>
             </div>
           ))}
         </div>

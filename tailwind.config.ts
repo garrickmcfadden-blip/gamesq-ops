@@ -18,7 +18,7 @@ const config: Config = {
         },
       },
       boxShadow: {
-        glow: '0 0 0 1px rgba(255,255,255,0.04), 0 12px 32px rgba(0,0,0,0.28)',
+        glow: '0 0 0 1px rgba(215,228,244,0.08), 0 18px 42px rgba(0,0,0,0.34), 0 0 36px rgba(255,79,26,0.06)',
       },
     },
   },
