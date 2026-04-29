@@ -104,6 +104,13 @@ export interface MatterMilestone {
   defendantAnswerReceivedAt?: string;
   disclosureStatementSentAt?: string;
   firstDiscoverySentAt?: string;
+  complaintFiledAt?: string;
+  serviceCompletedAt?: string;
+  discoveryResponsesDueAt?: string;
+  depositionsCompletedAt?: string;
+  mediationScheduledAt?: string;
+  mediationCompletedAt?: string;
+  trialDate?: string;
   settlementReachedAt?: string;
   settlementPaperworkReceivedAt?: string;
   settlementPaperworkSentAt?: string;

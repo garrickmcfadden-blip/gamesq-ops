@@ -248,6 +248,13 @@ export async function upsertMatterMilestoneRecord(matterId: string, updates: Par
   if (updates.defendantAnswerReceivedAt !== undefined) payload.defendant_answer_received_at = updates.defendantAnswerReceivedAt || null;
   if (updates.disclosureStatementSentAt !== undefined) payload.disclosure_statement_sent_at = updates.disclosureStatementSentAt || null;
   if (updates.firstDiscoverySentAt !== undefined) payload.first_discovery_sent_at = updates.firstDiscoverySentAt || null;
+  if (updates.complaintFiledAt !== undefined) payload.complaint_filed_at = updates.complaintFiledAt || null;
+  if (updates.serviceCompletedAt !== undefined) payload.service_completed_at = updates.serviceCompletedAt || null;
+  if (updates.discoveryResponsesDueAt !== undefined) payload.discovery_responses_due_at = updates.discoveryResponsesDueAt || null;
+  if (updates.depositionsCompletedAt !== undefined) payload.depositions_completed_at = updates.depositionsCompletedAt || null;
+  if (updates.mediationScheduledAt !== undefined) payload.mediation_scheduled_at = updates.mediationScheduledAt || null;
+  if (updates.mediationCompletedAt !== undefined) payload.mediation_completed_at = updates.mediationCompletedAt || null;
+  if (updates.trialDate !== undefined) payload.trial_date = updates.trialDate || null;
   if (updates.settlementReachedAt !== undefined) payload.settlement_reached_at = updates.settlementReachedAt || null;
   if (updates.settlementPaperworkReceivedAt !== undefined) payload.settlement_paperwork_received_at = updates.settlementPaperworkReceivedAt || null;
   if (updates.settlementPaperworkSentAt !== undefined) payload.settlement_paperwork_sent_at = updates.settlementPaperworkSentAt || null;
@@ -277,6 +284,13 @@ export async function fetchMatterMilestones(): Promise<MatterMilestone[]> {
     defendantAnswerReceivedAt: row.defendant_answer_received_at ?? undefined,
     disclosureStatementSentAt: row.disclosure_statement_sent_at ?? undefined,
     firstDiscoverySentAt: row.first_discovery_sent_at ?? undefined,
+    complaintFiledAt: row.complaint_filed_at ?? undefined,
+    serviceCompletedAt: row.service_completed_at ?? undefined,
+    discoveryResponsesDueAt: row.discovery_responses_due_at ?? undefined,
+    depositionsCompletedAt: row.depositions_completed_at ?? undefined,
+    mediationScheduledAt: row.mediation_scheduled_at ?? undefined,
+    mediationCompletedAt: row.mediation_completed_at ?? undefined,
+    trialDate: row.trial_date ?? undefined,
     settlementReachedAt: row.settlement_reached_at ?? undefined,
     settlementPaperworkReceivedAt: row.settlement_paperwork_received_at ?? undefined,
     settlementPaperworkSentAt: row.settlement_paperwork_sent_at ?? undefined,

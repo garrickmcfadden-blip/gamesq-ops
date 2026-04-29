@@ -13,6 +13,13 @@ export interface MatterMilestone {
   defendantAnswerReceivedAt?: string;
   disclosureStatementSentAt?: string;
   firstDiscoverySentAt?: string;
+  complaintFiledAt?: string;
+  serviceCompletedAt?: string;
+  discoveryResponsesDueAt?: string;
+  depositionsCompletedAt?: string;
+  mediationScheduledAt?: string;
+  mediationCompletedAt?: string;
+  trialDate?: string;
   settlementReachedAt?: string;
   settlementPaperworkReceivedAt?: string;
   settlementPaperworkSentAt?: string;
@@ -31,6 +38,13 @@ export interface KPIWarning {
   label: string;
   detail: string;
   severity: 'high' | 'medium';
+}
+
+export interface LitigationDeadline {
+  label: string;
+  due?: string;
+  status: 'complete' | 'overdue' | 'soon' | 'upcoming' | 'missing';
+  detail: string;
 }
 
 export interface SourceKPI {
@@ -67,6 +81,70 @@ function daysSince(value?: string) {
   if (!date) return null;
   const now = new Date();
   return Math.max(0, Math.round((now.getTime() - date.getTime()) / 86400000));
+}
+
+function addDays(value: string | undefined, days: number) {
+  const date = parseDate(value);
+  if (!date) return undefined;
+  date.setDate(date.getDate() + days);
+  return date.toISOString();
+}
+
+function deadlineStatus(due?: string, completed?: string): LitigationDeadline['status'] {
+  if (completed) return 'complete';
+  const date = parseDate(due);
+  if (!date) return 'missing';
+  const today = new Date();
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const days = Math.ceil((date.getTime() - start.getTime()) / 86400000);
+  if (days < 0) return 'overdue';
+  if (days <= 14) return 'soon';
+  return 'upcoming';
+}
+
+function formatShortDate(value?: string) {
+  const date = parseDate(value);
+  if (!date) return '—';
+  return date.toLocaleDateString([], { month: 'numeric', day: 'numeric', year: 'numeric' });
+}
+
+export function buildLitigationDeadlines(milestone?: MatterMilestone): LitigationDeadline[] {
+  if (!milestone) return [];
+  const disclosureDue = addDays(milestone.defendantAnswerReceivedAt, 40);
+  const discoveryResponsesDue = milestone.discoveryResponsesDueAt ?? addDays(milestone.firstDiscoverySentAt, 30);
+
+  return [
+    {
+      label: 'Rule 26.1 Disclosure',
+      due: disclosureDue,
+      status: deadlineStatus(disclosureDue, milestone.disclosureStatementSentAt),
+      detail: milestone.disclosureStatementSentAt ? `Sent ${formatShortDate(milestone.disclosureStatementSentAt)}` : 'Target: 40 days after Defendant Answer',
+    },
+    {
+      label: 'First Discovery Sent',
+      due: addDays(milestone.defendantAnswerReceivedAt, 30),
+      status: deadlineStatus(addDays(milestone.defendantAnswerReceivedAt, 30), milestone.firstDiscoverySentAt),
+      detail: milestone.firstDiscoverySentAt ? `Sent ${formatShortDate(milestone.firstDiscoverySentAt)}` : 'Internal target: 30 days after Defendant Answer',
+    },
+    {
+      label: 'Discovery Responses Due',
+      due: discoveryResponsesDue,
+      status: deadlineStatus(discoveryResponsesDue),
+      detail: milestone.discoveryResponsesDueAt ? 'Manual due date' : 'Auto target: 30 days after first discovery sent',
+    },
+    {
+      label: 'Mediation',
+      due: milestone.mediationScheduledAt,
+      status: deadlineStatus(milestone.mediationScheduledAt, milestone.mediationCompletedAt),
+      detail: milestone.mediationCompletedAt ? `Completed ${formatShortDate(milestone.mediationCompletedAt)}` : 'Set or complete mediation date',
+    },
+    {
+      label: 'Trial',
+      due: milestone.trialDate,
+      status: deadlineStatus(milestone.trialDate),
+      detail: 'Trial date anchor for future pretrial deadlines',
+    },
+  ];
 }
 
 export function buildKpis(matters: Matter[], tasks: Task[], milestones: MatterMilestone[]): KPIStat[] {
@@ -154,6 +232,7 @@ export function buildWarnings(matters: Matter[], tasks: Task[], milestones: Matt
     const recordsToDemand = daysBetween(milestone?.recordsFirstOrderedAt, milestone?.demandSentAt);
     const demandAge = daysSince(milestone?.demandSentAt);
     const retainerOutstanding = milestone?.retainerSentAt && !milestone?.retainerSignedAt ? daysSince(milestone.retainerSentAt) : null;
+    const litigationDeadlines = buildLitigationDeadlines(milestone);
 
     if (recordsToDemand !== null && recordsToDemand > thresholds.recordsToDemandDays) {
       warnings.push({ matterId: matter.id, label: 'Slow demand cycle', detail: `${recordsToDemand} days from records order to demand`, severity: 'medium' });
@@ -163,6 +242,11 @@ export function buildWarnings(matters: Matter[], tasks: Task[], milestones: Matt
     }
     if (retainerOutstanding !== null && retainerOutstanding > thresholds.unsignedRetainerDays) {
       warnings.push({ matterId: matter.id, label: 'Unsigned retainer aging', detail: `${retainerOutstanding} days since retainer sent`, severity: 'medium' });
+    }
+    for (const deadline of litigationDeadlines) {
+      if (deadline.status === 'overdue' || deadline.status === 'soon') {
+        warnings.push({ matterId: matter.id, label: deadline.status === 'overdue' ? 'Litigation deadline overdue' : 'Litigation deadline soon', detail: `${deadline.label}: ${formatShortDate(deadline.due)}`, severity: deadline.status === 'overdue' ? 'high' : 'medium' });
+      }
     }
   }
 

@@ -113,6 +113,13 @@ create table if not exists matter_milestones (
   defendant_answer_received_at timestamptz,
   disclosure_statement_sent_at timestamptz,
   first_discovery_sent_at timestamptz,
+  complaint_filed_at timestamptz,
+  service_completed_at timestamptz,
+  discovery_responses_due_at timestamptz,
+  depositions_completed_at timestamptz,
+  mediation_scheduled_at timestamptz,
+  mediation_completed_at timestamptz,
+  trial_date timestamptz,
   settlement_reached_at timestamptz,
   settlement_paperwork_received_at timestamptz,
   settlement_paperwork_sent_at timestamptz,
@@ -139,5 +146,7 @@ create index if not exists idx_matter_milestones_letter_of_rep_sent_at on matter
 create index if not exists idx_matter_milestones_defendant_answer_received_at on matter_milestones(defendant_answer_received_at);
 create index if not exists idx_matter_milestones_disclosure_statement_sent_at on matter_milestones(disclosure_statement_sent_at);
 create index if not exists idx_matter_milestones_first_discovery_sent_at on matter_milestones(first_discovery_sent_at);
+create index if not exists idx_matter_milestones_trial_date on matter_milestones(trial_date);
+create index if not exists idx_matter_milestones_discovery_responses_due_at on matter_milestones(discovery_responses_due_at);
 create index if not exists idx_matter_milestones_settlement_paperwork_received_at on matter_milestones(settlement_paperwork_received_at);
 create index if not exists idx_matter_milestones_client_check_sent_at on matter_milestones(client_check_sent_at);

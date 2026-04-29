@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { buildKpis, buildSourceKpis, buildWarnings, matterTiming } from '@/lib/kpi';
+import { buildKpis, buildLitigationDeadlines, buildSourceKpis, buildWarnings, matterTiming } from '@/lib/kpi';
 import { KPIThresholds } from '@/lib/settings';
 import { SaveStatusBanner } from '@/components/save-status';
 import { useMissionControl } from '@/lib/store';
@@ -246,6 +246,7 @@ export function MissionControl() {
   const selectedMatter = filteredMatters.find((matter) => matter.id === selectedMatterId) ?? matters.find((matter) => matter.id === selectedMatterId) ?? filteredMatters[0] ?? matters[0];
   const selectedMilestone = milestones.find((m) => m.matterId === selectedMatter?.id);
   const selectedTiming = selectedMatter ? matterTiming(selectedMatter, selectedMilestone) : [];
+  const selectedLitigationDeadlines = buildLitigationDeadlines(selectedMilestone);
   const selectedTasks = tasks.filter((task) => task.matterId === selectedMatter?.id);
   const selectedWaiting = waitingOn.filter((item) => item.matterId === selectedMatter?.id);
   const selectedMoney = money.find((item) => item.matterId === selectedMatter?.id);
@@ -582,9 +583,29 @@ export function MissionControl() {
                   </div>
                   <h5 className="mt-5 text-xs uppercase tracking-[0.2em] text-gam-sky/70">Litigation</h5>
                   <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <label className="rounded-xl bg-white/70 p-3"><div className="text-xs uppercase tracking-[0.18em] text-gam-blue/45">Complaint Filed</div><input type="date" value={selectedMilestone?.complaintFiledAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { complaintFiledAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-gam-blue outline-none" /></label>
+                    <label className="rounded-xl bg-white/70 p-3"><div className="text-xs uppercase tracking-[0.18em] text-gam-blue/45">Service Completed</div><input type="date" value={selectedMilestone?.serviceCompletedAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { serviceCompletedAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-gam-blue outline-none" /></label>
                     <label className="rounded-xl bg-white/70 p-3"><div className="text-xs uppercase tracking-[0.18em] text-gam-blue/45">Defendant Answer Received</div><input type="date" value={selectedMilestone?.defendantAnswerReceivedAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { defendantAnswerReceivedAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-gam-blue outline-none" /></label>
                     <label className="rounded-xl bg-white/70 p-3"><div className="text-xs uppercase tracking-[0.18em] text-gam-blue/45">Disclosure Statement Sent</div><input type="date" value={selectedMilestone?.disclosureStatementSentAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { disclosureStatementSentAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-gam-blue outline-none" /></label>
                     <label className="rounded-xl bg-white/70 p-3"><div className="text-xs uppercase tracking-[0.18em] text-gam-blue/45">First Discovery Sent</div><input type="date" value={selectedMilestone?.firstDiscoverySentAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { firstDiscoverySentAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-gam-blue outline-none" /></label>
+                    <label className="rounded-xl bg-white/70 p-3"><div className="text-xs uppercase tracking-[0.18em] text-gam-blue/45">Discovery Responses Due</div><input type="date" value={selectedMilestone?.discoveryResponsesDueAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { discoveryResponsesDueAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-gam-blue outline-none" /></label>
+                    <label className="rounded-xl bg-white/70 p-3"><div className="text-xs uppercase tracking-[0.18em] text-gam-blue/45">Depositions Completed</div><input type="date" value={selectedMilestone?.depositionsCompletedAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { depositionsCompletedAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-gam-blue outline-none" /></label>
+                    <label className="rounded-xl bg-white/70 p-3"><div className="text-xs uppercase tracking-[0.18em] text-gam-blue/45">Mediation Scheduled</div><input type="date" value={selectedMilestone?.mediationScheduledAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { mediationScheduledAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-gam-blue outline-none" /></label>
+                    <label className="rounded-xl bg-white/70 p-3"><div className="text-xs uppercase tracking-[0.18em] text-gam-blue/45">Mediation Completed</div><input type="date" value={selectedMilestone?.mediationCompletedAt?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { mediationCompletedAt: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-gam-blue outline-none" /></label>
+                    <label className="rounded-xl bg-white/70 p-3"><div className="text-xs uppercase tracking-[0.18em] text-gam-blue/45">Trial Date</div><input type="date" value={selectedMilestone?.trialDate?.slice(0, 10) ?? ''} onChange={(e) => updateMatterMilestone(selectedMatter.id, { trialDate: e.target.value || undefined })} className="mt-2 w-full border-0 bg-transparent text-sm text-gam-blue outline-none" /></label>
+                  </div>
+                  <div className="mt-5 rounded-2xl border border-gam-blue/10 bg-gam-sky/35 p-4">
+                    <h5 className="text-xs uppercase tracking-[0.2em] text-gam-blue/60">Deadline Engine</h5>
+                    <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                      {selectedLitigationDeadlines.map((deadline) => (
+                        <div key={deadline.label} className={`rounded-xl border p-3 ${deadline.status === 'overdue' ? 'border-gam-orange/60 bg-gam-orange/10' : deadline.status === 'soon' ? 'border-gam-peach/70 bg-gam-peach/20' : deadline.status === 'complete' ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-gam-blue/10 bg-white/75'}`}>
+                          <div className="text-xs uppercase tracking-[0.18em] text-gam-blue/45">{deadline.label}</div>
+                          <div className="mt-2 text-sm font-semibold text-gam-blue">{formatDateDisplay(deadline.due)}</div>
+                          <div className="mt-1 text-[11px] uppercase tracking-[0.16em] text-gam-orange">{deadline.status}</div>
+                          <div className="mt-2 text-xs text-gam-blue/60">{deadline.detail}</div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                   <h5 className="mt-5 text-xs uppercase tracking-[0.2em] text-gam-sky/70">Settlement / Disbursement</h5>
                   <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
