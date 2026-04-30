@@ -35,6 +35,9 @@ interface MissionControlContextValue {
     projectedValue?: string;
     incidentDate?: string;
     statute?: string;
+    claimNumber?: string;
+    adjusterName?: string;
+    adjusterPhone?: string;
   }) => Promise<void>;
   createContact: (input: { matterId: string; name: string; role: Contact['role']; phone?: string; email?: string }) => Promise<void>;
   createWaitingItem: (input: { matterId: string; subject: string; waitingOn: string; age?: string; next?: string }) => Promise<void>;
@@ -194,6 +197,7 @@ export function MissionControlProvider({ children }: { children: React.ReactNode
       const optimisticMatter: Matter = {
         id: optimisticId, title: input.title, client: input.client, stage: input.stage, priority: input.priority, status: input.status,
         owner: input.owner, lastActivity: 'Matter created in Mission Control', nextAction: input.nextAction, blocker: input.blocker,
+        claimNumber: input.claimNumber, adjusterName: input.adjusterName, adjusterPhone: input.adjusterPhone,
         value: formatCurrency(input.projectedValue), incidentDate: input.incidentDate || '', statute: input.statute || '', sourceType: undefined, sourceDetail: undefined, campaign: undefined, archived: false, archivedAt: undefined, createdAt: new Date().toISOString(), notes: [],
       };
       setMatters((current) => [optimisticMatter, ...current]);

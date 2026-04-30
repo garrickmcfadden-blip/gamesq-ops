@@ -29,6 +29,9 @@ export async function fetchMatters(): Promise<Matter[]> {
     id: row.id,
     title: row.title,
     client: row.client_name,
+    claimNumber: row.claim_number ?? undefined,
+    adjusterName: row.adjuster_name ?? undefined,
+    adjusterPhone: row.adjuster_phone ?? undefined,
     stage: row.stage,
     priority: row.priority,
     status: row.status,
@@ -103,6 +106,9 @@ export async function updateMatterRecord(matterId: string, updates: Partial<Matt
   if (updates.lastActivity !== undefined) payload.last_activity = updates.lastActivity;
   if (updates.incidentDate !== undefined) payload.incident_date = updates.incidentDate || null;
   if (updates.statute !== undefined) payload.statute_date = updates.statute || null;
+  if (updates.claimNumber !== undefined) payload.claim_number = updates.claimNumber || null;
+  if (updates.adjusterName !== undefined) payload.adjuster_name = updates.adjusterName || null;
+  if (updates.adjusterPhone !== undefined) payload.adjuster_phone = updates.adjusterPhone || null;
   if (updates.value !== undefined) payload.projected_value = numericCurrency(updates.value);
   if (updates.sourceType !== undefined) payload.source_type = updates.sourceType || null;
   if (updates.sourceDetail !== undefined) payload.source_detail = updates.sourceDetail || null;
@@ -145,6 +151,9 @@ export async function createMatterRecord(input: {
   projectedValue?: string;
   incidentDate?: string;
   statute?: string;
+  claimNumber?: string;
+  adjusterName?: string;
+  adjusterPhone?: string;
 }) {
   const { data, error } = await supabase
     .from('matters')
@@ -161,6 +170,9 @@ export async function createMatterRecord(input: {
       projected_value: numericCurrency(input.projectedValue),
       incident_date: input.incidentDate || null,
       statute_date: input.statute || null,
+      claim_number: input.claimNumber || null,
+      adjuster_name: input.adjusterName || null,
+      adjuster_phone: input.adjusterPhone || null,
       source_type: null,
       source_detail: null,
       campaign: null,

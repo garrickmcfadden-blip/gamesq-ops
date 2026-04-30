@@ -8,6 +8,9 @@ export interface Matter {
   id: string;
   title: string;
   client: string;
+  claimNumber?: string;
+  adjusterName?: string;
+  adjusterPhone?: string;
   stage: Stage;
   priority: Priority;
   status: string;
