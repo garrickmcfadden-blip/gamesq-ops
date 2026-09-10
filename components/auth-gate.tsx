@@ -3,10 +3,13 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
-const OWNER_EMAIL = 'garrick@gamesqlaw.com';
+const AUTHORIZED_EMAILS = new Set([
+  'garrick@gamesqlaw.com',
+  'doug@gamesqlaw.com',
+]);
 
-function isOwnerEmail(email?: string | null) {
-  return email?.toLowerCase() === OWNER_EMAIL;
+function isAuthorizedEmail(email?: string | null) {
+  return !!email && AUTHORIZED_EMAILS.has(email.toLowerCase());
 }
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
@@ -31,11 +34,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         if (error) {
           setAuthed(false);
           setMessage(error.message);
-        } else if (data.session && isOwnerEmail(data.session.user.email)) {
+        } else if (data.session && isAuthorizedEmail(data.session.user.email)) {
           setAuthed(true);
         } else if (data.session) {
           setAuthed(false);
-          setMessage('This Mission Control account is restricted to Garrick’s GAMESQ login.');
+          setMessage('This GAMESQ account is not authorized for Mission Control.');
           await supabase.auth.signOut();
         } else {
           setAuthed(false);
@@ -56,13 +59,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!mounted) return;
-      if (session && isOwnerEmail(session.user.email)) {
+      if (session && isAuthorizedEmail(session.user.email)) {
         setAuthed(true);
         setMessage('');
       } else {
         setAuthed(false);
         if (session) {
-          setMessage('This Mission Control account is restricted to Garrick’s GAMESQ login.');
+          setMessage('This GAMESQ account is not authorized for Mission Control.');
           void supabase.auth.signOut();
         }
       }
@@ -79,8 +82,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   async function signIn() {
     setMessage('');
-    if (!isOwnerEmail(email)) {
-      setMessage('Use garrick@gamesqlaw.com for Mission Control.');
+    if (!isAuthorizedEmail(email)) {
+      setMessage('Use an authorized GAMESQ email for Mission Control.');
       return;
     }
     const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
@@ -106,12 +109,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/5 p-6 shadow-glow backdrop-blur">
           <p className="text-sm uppercase tracking-[0.32em] text-gam-peach">GAMESQ, PLC</p>
           <h1 className="mt-2 text-3xl font-semibold text-white">Mission Control Sign-In</h1>
-          <p className="mt-3 text-sm text-white/65">Use Garrick’s GAMESQ email so the app gate and Supabase policies both restrict Mission Control to the owner account.</p>
+          <p className="mt-3 text-sm text-white/65">Use your authorized GAMESQ email to access Mission Control.</p>
           <div className="mt-5 space-y-3">
             <input
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="garrick@gamesqlaw.com"
+              placeholder="your.name@gamesqlaw.com"
               className="w-full rounded-2xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none placeholder:text-white/30"
             />
             <button onClick={signIn} className="w-full rounded-2xl bg-gam-orange px-4 py-3 text-sm font-semibold text-white transition hover:brightness-110">

@@ -5,7 +5,7 @@ import { buildKpis, buildLitigationDeadlines, buildSourceKpis, buildWarnings, ma
 import { KPIThresholds } from '@/lib/settings';
 import { SaveStatusBanner } from '@/components/save-status';
 import { useMissionControl } from '@/lib/store';
-import { ActivityItem, Contact, Matter, Stage } from '@/lib/types';
+import { ActivityItem, Contact, Matter, Stage, Task } from '@/lib/types';
 
 function panel(title: string, subtitle?: string) {
   return { title, subtitle };
@@ -24,6 +24,8 @@ const panels = {
 const stageOrder: Stage[] = ['Intake', 'Treatment', 'Demand', 'Litigation', 'Resolution'];
 
 type DirectorySort = 'priority' | 'statute' | 'client' | 'value';
+
+type QueueTask = Task & { matter?: Matter };
 
 function severityClasses(severity: string) {
   if (severity === 'critical') return 'border-gam-orange/60 bg-gam-orange/10 text-gam-blue';
@@ -149,7 +151,7 @@ function editEventFormValue(item: { title: string; type: string; startsAt?: stri
 
 export function MissionControl() {
   const { matters, contacts, tasks, waitingOn, events, money, activity, milestones, thresholds, setThresholds, selectedMatterId, setSelectedMatterId, updateMatter, updateMatterMilestone, updateTaskStatus, createTask, createMatter, createContact, createWaitingItem, createActivity, createMoneyItem, createMatterNote, createEvent, deleteTask, deleteEvent, deleteWaitingItem, deleteMoneyItem, deleteMatterNote, updateEvent, updateWaitingItem, updateMoneyItem, saveStatus } = useMissionControl();
-  const [activeView, setActiveView] = useState<'mission' | 'directory'>('mission');
+  const [activeView, setActiveView] = useState<'queue' | 'mission' | 'directory'>('queue');
   const [search, setSearch] = useState('');
   const [stageFilter, setStageFilter] = useState<'all' | Stage>('all');
   const [priorityFilter, setPriorityFilter] = useState<'all' | Matter['priority']>('all');
@@ -159,6 +161,10 @@ export function MissionControl() {
   const [newTaskOwner, setNewTaskOwner] = useState('Garrick');
   const [newTaskDue, setNewTaskDue] = useState(() => new Date().toISOString().slice(0, 10));
   const [newTaskTime, setNewTaskTime] = useState('');
+  const [queueTaskMatterId, setQueueTaskMatterId] = useState('');
+  const [queueTaskTitle, setQueueTaskTitle] = useState('');
+  const [queueTaskOwner, setQueueTaskOwner] = useState('Garrick');
+  const [queueTaskDue, setQueueTaskDue] = useState(() => new Date().toISOString().slice(0, 10));
   const [matterForm, setMatterForm] = useState<{ title: string; client: string; stage: Stage; priority: Matter['priority']; status: string; owner: string; nextAction: string; blocker: string; projectedValue: string; incidentDate: string; statute: string; claimNumber: string; adjusterName: string; adjusterPhone: string; }>({ title: '', client: '', stage: 'Intake', priority: 'medium', status: '', owner: 'Garrick', nextAction: '', blocker: '', projectedValue: '', incidentDate: '', statute: '', claimNumber: '', adjusterName: '', adjusterPhone: '' });
   const [contactForm, setContactForm] = useState({ name: '', role: 'client' as Contact['role'], phone: '', email: '' });
   const [waitingForm, setWaitingForm] = useState({ subject: '', waitingOn: '', age: '', next: '' });
@@ -262,6 +268,30 @@ export function MissionControl() {
     return pb - pa;
   }), [filteredMatters, tasks]);
 
+  const queueTasks = useMemo<QueueTask[]>(() => tasks
+    .filter((task) => task.status !== 'done')
+    .map((task) => ({ ...task, matter: matters.find((matter) => matter.id === task.matterId) }))
+    .filter((task) => !task.matter?.archived)
+    .sort((a, b) => {
+      const urgency = taskUrgencyWeight(b.due) - taskUrgencyWeight(a.due);
+      if (urgency !== 0) return urgency;
+      const priorityOrder = { critical: 4, high: 3, medium: 2, low: 1 };
+      return priorityOrder[b.priority] - priorityOrder[a.priority];
+    }), [matters, tasks]);
+
+  const queueOverdueTasks = useMemo(() => queueTasks.filter((task) => taskUrgencyWeight(task.due) >= 100), [queueTasks]);
+  const queueTodayTasks = useMemo(() => queueTasks.filter((task) => taskUrgencyWeight(task.due) === 90), [queueTasks]);
+  const queueGarrickTasks = useMemo(() => queueTasks.filter((task) => /garrick/i.test(task.owner) && taskUrgencyWeight(task.due) < 90).slice(0, 8), [queueTasks]);
+  const queueDougTasks = useMemo(() => queueTasks.filter((task) => /doug/i.test(task.owner) && taskUrgencyWeight(task.due) < 90).slice(0, 8), [queueTasks]);
+  const queueRiskWarnings = useMemo(() => warnings.filter((warning) => warning.severity === 'high').slice(0, 8), [warnings]);
+  const queueStaleWaiting = useMemo(() => waitingOn
+    .filter((item) => countWaitingAgeDays(item.age) > 7 && filteredMatters.some((matter) => matter.id === item.matterId))
+    .sort((a, b) => countWaitingAgeDays(b.age) - countWaitingAgeDays(a.age))
+    .slice(0, 8), [filteredMatters, waitingOn]);
+  const queueTodayEvents = useMemo(() => events
+    .filter((item) => item.startsAt && isSameDay(new Date(item.startsAt), new Date()))
+    .slice(0, 8), [events]);
+
   const eventBuckets = useMemo(() => {
     const base = events.filter((item) => !selectedMatter || !item.matterId || item.matterId === selectedMatter.id || filteredMatters.some((m) => m.id === item.matterId));
     const now = new Date();
@@ -295,6 +325,13 @@ export function MissionControl() {
     createTask({ matterId: selectedMatter.id, title: newTaskTitle.trim(), owner: newTaskOwner, due, priority: 'medium', status: 'open' });
     setNewTaskTitle('');
     setNewTaskTime('');
+  }
+
+  function submitQueueTask() {
+    const matterId = queueTaskMatterId || selectedMatter?.id;
+    if (!matterId || !queueTaskTitle.trim()) return;
+    createTask({ matterId, title: queueTaskTitle.trim(), owner: queueTaskOwner || 'Garrick', due: `${queueTaskDue}T09:00:00`, priority: 'medium', status: 'open' });
+    setQueueTaskTitle('');
   }
 
   function submitMatter() {
@@ -344,6 +381,7 @@ export function MissionControl() {
       <div className="mx-auto flex max-w-[1680px] flex-col gap-6">
         <header className="rounded-3xl border border-gam-blue/10 bg-white/85 p-6 shadow-glow backdrop-blur">
           <div className="mb-4 flex flex-wrap gap-3">
+            <button onClick={() => setActiveView('queue')} className={`rounded-2xl px-4 py-2 text-sm font-semibold ${activeView === 'queue' ? 'bg-gam-orange text-white' : 'border border-gam-blue/10 bg-white/70 text-gam-blue/70'}`}>Daily Action Queue</button>
             <button onClick={() => setActiveView('mission')} className={`rounded-2xl px-4 py-2 text-sm font-semibold ${activeView === 'mission' ? 'bg-gam-orange text-white' : 'border border-gam-blue/10 bg-white/70 text-gam-blue/70'}`}>Mission Control</button>
             <button onClick={() => setActiveView('directory')} className={`rounded-2xl px-4 py-2 text-sm font-semibold ${activeView === 'directory' ? 'bg-gam-orange text-white' : 'border border-gam-blue/10 bg-white/70 text-gam-blue/70'}`}>All Matters</button>
           </div>
@@ -351,9 +389,9 @@ export function MissionControl() {
             <div>
               <p className="text-sm uppercase tracking-[0.32em] text-gam-orange">GAMESQ, PLC</p>
               <h1 className="mt-2 text-3xl font-bold tracking-tight text-gam-blue md:text-4xl">Mission Control</h1>
-              <p className="mt-3 max-w-3xl text-sm text-gam-blue/70 md:text-base">Configurable KPI warnings, grouped drilldowns, and matter filtering/search so Mission Control stays useful as the caseload grows.</p>
+              <p className="mt-3 max-w-3xl text-sm text-gam-blue/70 md:text-base">{activeView === 'queue' ? 'Start here: protect deadlines, move the next case action, and keep responsibility clear.' : 'Configurable KPI warnings, grouped drilldowns, and matter filtering/search so Mission Control stays useful as the caseload grows.'}</p>
             </div>
-            <div className="flex items-center gap-3">
+            {activeView !== 'queue' ? <div className="flex items-center gap-3">
               <button onClick={() => setShowNewMatter((v) => !v)} className="rounded-2xl bg-gam-orange px-4 py-3 text-sm font-semibold text-white transition hover:brightness-110">{showNewMatter ? 'Close New Matter' : 'New Matter'}</button>
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                 {summaryStats.map((stat) => (
@@ -364,10 +402,65 @@ export function MissionControl() {
                   </div>
                 ))}
               </div>
-            </div>
+            </div> : null}
           </div>
         </header>
 
+        {activeView === 'queue' ? (
+          <div className="space-y-6">
+            <Card title="Daily Action Queue" subtitle="The work that needs movement today—ordered by risk, commitment, and ownership.">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-4"><div className="text-xs uppercase tracking-[0.18em] text-red-300">Deadline risk</div><div className="mt-2 text-3xl font-semibold text-gam-blue">{queueRiskWarnings.length + queueOverdueTasks.length}</div><div className="mt-1 text-xs text-gam-blue/60">{queueOverdueTasks.length} overdue task{queueOverdueTasks.length === 1 ? '' : 's'}</div></div>
+                <div className="rounded-2xl border border-gam-orange/20 bg-gam-orange/5 p-4"><div className="text-xs uppercase tracking-[0.18em] text-gam-orange">Due today</div><div className="mt-2 text-3xl font-semibold text-gam-blue">{queueTodayTasks.length + queueTodayEvents.length}</div><div className="mt-1 text-xs text-gam-blue/60">{queueTodayTasks.length} task{queueTodayTasks.length === 1 ? '' : 's'} · {queueTodayEvents.length} event{queueTodayEvents.length === 1 ? '' : 's'}</div></div>
+                <div className="rounded-2xl border border-gam-peach/20 bg-gam-peach/10 p-4"><div className="text-xs uppercase tracking-[0.18em] text-gam-orange">Waiting too long</div><div className="mt-2 text-3xl font-semibold text-gam-blue">{queueStaleWaiting.length}</div><div className="mt-1 text-xs text-gam-blue/60">More than seven days old</div></div>
+                <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/5 p-4"><div className="text-xs uppercase tracking-[0.18em] text-emerald-500">Assigned work</div><div className="mt-2 text-3xl font-semibold text-gam-blue">{queueGarrickTasks.length + queueDougTasks.length}</div><div className="mt-1 text-xs text-gam-blue/60">Garrick and Doug, excluding today</div></div>
+              </div>
+            </Card>
+
+            <div className="grid gap-6 xl:grid-cols-2">
+              <Card title="1. Overdue & Deadline Risk" subtitle="Clear this list before lower-priority work.">
+                <div className="space-y-3">
+                  {queueRiskWarnings.map((warning, index) => <button key={`${warning.matterId}-${index}`} onClick={() => selectMatter(warning.matterId)} className="w-full rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-left"><p className="text-xs uppercase tracking-[0.18em] text-red-300">{warning.label}</p><p className="mt-1 text-sm font-semibold text-gam-blue">{warning.detail}</p></button>)}
+                  {queueOverdueTasks.map((task) => <div key={task.id} className="flex gap-2 rounded-2xl border border-red-500/30 bg-red-500/5 p-4"><button onClick={() => selectMatter(task.matterId)} className="min-w-0 flex-1 text-left"><p className="text-sm font-semibold text-gam-blue">{task.title}</p><p className="mt-1 text-xs text-gam-blue/60">{task.matter?.client} · {task.matter?.title} · {formatTaskDue(task.due)}</p></button><button onClick={() => updateTaskStatus(task.id, 'done')} className="self-start rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-3 py-2 text-xs font-semibold text-emerald-600">Done</button></div>)}
+                  {!queueRiskWarnings.length && !queueOverdueTasks.length ? <p className="rounded-xl bg-emerald-400/5 p-4 text-sm text-gam-blue/65">No high-risk deadline or overdue task is currently flagged.</p> : null}
+                </div>
+              </Card>
+
+              <Card title="2. Due Today" subtitle="Commitments requiring attention before the day closes.">
+                <div className="space-y-3">
+                  {queueTodayTasks.map((task) => <div key={task.id} className="flex gap-2 rounded-2xl border border-gam-orange/30 bg-gam-orange/5 p-4"><button onClick={() => selectMatter(task.matterId)} className="min-w-0 flex-1 text-left"><p className="text-sm font-semibold text-gam-blue">{task.title}</p><p className="mt-1 text-xs text-gam-blue/60">{task.owner} · {task.matter?.client} · {task.matter?.title}</p></button><button onClick={() => updateTaskStatus(task.id, 'done')} className="self-start rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-3 py-2 text-xs font-semibold text-emerald-600">Done</button></div>)}
+                  {queueTodayEvents.map((event) => <button key={event.id} onClick={() => selectMatter(event.matterId)} className="w-full rounded-2xl border border-gam-blue/10 bg-white/70 p-4 text-left"><p className="text-sm font-semibold text-gam-blue">{event.title}</p><p className="mt-1 text-xs text-gam-blue/60">{event.type} · {event.time}</p></button>)}
+                  {!queueTodayTasks.length && !queueTodayEvents.length ? <p className="rounded-xl bg-white/70 p-4 text-sm text-gam-blue/65">No tasks or events are due today.</p> : null}
+                </div>
+              </Card>
+
+              <Card title="3. Waiting on Others" subtitle="Items that need a follow-up, escalation, or a new deadline.">
+                <div className="space-y-3">
+                  {queueStaleWaiting.map((item) => <button key={item.id} onClick={() => selectMatter(item.matterId)} className="w-full rounded-2xl border border-gam-peach/30 bg-gam-peach/10 p-4 text-left"><div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold text-gam-blue">{item.subject}</p><span className="text-xs font-semibold text-gam-orange">{item.age}</span></div><p className="mt-1 text-xs text-gam-blue/60">Waiting on {item.waitingOn} · Next: {item.next || 'Set a follow-up step'}</p></button>)}
+                  {!queueStaleWaiting.length ? <p className="rounded-xl bg-white/70 p-4 text-sm text-gam-blue/65">No waiting item is more than seven days old.</p> : null}
+                </div>
+              </Card>
+
+              <Card title="4. Assigned Work" subtitle="Upcoming work owned by Garrick and Doug.">
+                <div className="grid gap-5 md:grid-cols-2">
+                  <div><h3 className="text-xs uppercase tracking-[0.18em] text-gam-orange">Garrick</h3><div className="mt-3 space-y-3">{queueGarrickTasks.map((task) => <div key={task.id} className="flex gap-2 rounded-2xl border border-gam-blue/10 bg-white/70 p-3"><button onClick={() => selectMatter(task.matterId)} className="min-w-0 flex-1 text-left"><p className="text-sm font-semibold text-gam-blue">{task.title}</p><p className="mt-1 text-xs text-gam-blue/60">{task.matter?.client} · {formatTaskDue(task.due)}</p></button><button onClick={() => updateTaskStatus(task.id, 'done')} className="self-start text-xs font-semibold text-emerald-600">Done</button></div>)}{!queueGarrickTasks.length ? <p className="text-sm text-gam-blue/55">No upcoming Garrick task.</p> : null}</div></div>
+                  <div><h3 className="text-xs uppercase tracking-[0.18em] text-gam-orange">Doug</h3><div className="mt-3 space-y-3">{queueDougTasks.map((task) => <div key={task.id} className="flex gap-2 rounded-2xl border border-gam-blue/10 bg-white/70 p-3"><button onClick={() => selectMatter(task.matterId)} className="min-w-0 flex-1 text-left"><p className="text-sm font-semibold text-gam-blue">{task.title}</p><p className="mt-1 text-xs text-gam-blue/60">{task.matter?.client} · {formatTaskDue(task.due)}</p></button><button onClick={() => updateTaskStatus(task.id, 'done')} className="self-start text-xs font-semibold text-emerald-600">Done</button></div>)}{!queueDougTasks.length ? <p className="text-sm text-gam-blue/55">No upcoming Doug task.</p> : null}</div></div>
+                </div>
+              </Card>
+            </div>
+
+            <Card title="Quick Capture" subtitle="Add the next concrete action while it is in front of you.">
+              <div className="grid gap-3 md:grid-cols-[1.1fr,1.5fr,0.8fr,0.8fr,auto]">
+                <select value={queueTaskMatterId || selectedMatter?.id || ''} onChange={(e) => setQueueTaskMatterId(e.target.value)} className="rounded-xl border border-gam-blue/10 bg-white/70 px-3 py-2 text-sm text-gam-blue outline-none"><option value="">Choose matter</option>{matters.filter((matter) => !matter.archived).map((matter) => <option key={matter.id} value={matter.id}>{matter.client} — {matter.title}</option>)}</select>
+                <input value={queueTaskTitle} onChange={(e) => setQueueTaskTitle(e.target.value)} placeholder="Next action" className="rounded-xl border border-gam-blue/10 bg-white/70 px-3 py-2 text-sm text-gam-blue outline-none" />
+                <select value={queueTaskOwner} onChange={(e) => setQueueTaskOwner(e.target.value)} className="rounded-xl border border-gam-blue/10 bg-white/70 px-3 py-2 text-sm text-gam-blue outline-none"><option>Garrick</option><option>Doug</option></select>
+                <input type="date" value={queueTaskDue} onChange={(e) => setQueueTaskDue(e.target.value)} className="rounded-xl border border-gam-blue/10 bg-white/70 px-3 py-2 text-sm text-gam-blue outline-none" />
+                <button onClick={submitQueueTask} className="rounded-xl bg-gam-orange px-5 py-2 text-sm font-semibold text-white">Add Task</button>
+              </div>
+            </Card>
+          </div>
+        ) : (
+          <>
         <Card title="Filters & KPI Thresholds" subtitle="Control what you see and when Mission Control flags risk">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search client or matter" className="rounded-xl border border-gam-blue/10 bg-white/70 px-3 py-2 text-sm text-gam-blue outline-none" />
@@ -846,6 +939,8 @@ export function MissionControl() {
             </Card>
           </div>
         </div>
+        )}
+          </>
         )}
       </div>
     </main>
